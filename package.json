@@ -1,0 +1,63 @@
+{
+  "name": "omnimind",
+  "version": "0.1.0",
+  "description": "Proactive, cross-tool memory system for LLMs — 100% local, privacy-first",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "omnimind": "dist/cli.js",
+    "omnimind-mcp": "dist/mcp-server.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx watch src/index.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "benchmark": "tsx tests/benchmarks/RecallBenchmark.ts",
+    "lint": "eslint src/ tests/",
+    "lint:fix": "eslint src/ tests/ --fix",
+    "format": "prettier --write \"src/**/*.ts\" \"tests/**/*.ts\"",
+    "typecheck": "tsc --noEmit",
+    "prepare": "npm run build",
+    "start": "node dist/index.js",
+    "mcp": "node dist/mcp-server.js"
+  },
+  "keywords": [
+    "llm",
+    "memory",
+    "ai",
+    "mcp",
+    "local",
+    "privacy",
+    "rag",
+    "embeddings",
+    "knowledge-graph",
+    "vector-search"
+  ],
+  "author": "Omnimind Contributors",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "better-sqlite3": "^11.0.0",
+    "onnxruntime-node": "^1.18.0",
+    "zod": "^3.23.0",
+    "zod-to-json-schema": "^3.25.2"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.10",
+    "@types/node": "^20.14.0",
+    "@typescript-eslint/eslint-plugin": "^7.13.0",
+    "@typescript-eslint/parser": "^7.13.0",
+    "@vitest/coverage-v8": "^1.6.0",
+    "eslint": "^8.57.0",
+    "prettier": "^3.3.0",
+    "tsx": "^4.15.0",
+    "typescript": "^5.5.0",
+    "vitest": "^1.6.0"
+  }
+}
