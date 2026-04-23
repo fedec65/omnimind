@@ -2,6 +2,8 @@
 
 > **Privacy-first, proactive memory for AI tools — 100% local, zero API calls.**
 
+![Omnimind Banner](assets/omnimind-banner.png)
+
 Omnimind is a local memory engine that stores, searches, and predicts relevant context across your AI tools (Claude Code, Cursor, ChatGPT, etc.) via the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/). It runs entirely on your machine: embeddings, search, compression, and encryption are all local.
 
 ## Why Omnimind?

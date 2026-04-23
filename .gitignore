@@ -45,3 +45,8 @@ lerna-debug.log*
 tests/tmp/
 temp/
 tmp/
+
+# Internal docs (agent-facing, not user-facing)
+CLAUDE.md
+ARCHITECTURE.md
+AGENTS.md
