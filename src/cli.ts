@@ -45,6 +45,14 @@ async function main(): Promise<void> {
     process.exit(0);
   }
 
+  if (cmd === '--version' || cmd === '-v') {
+    const pkg = JSON.parse(
+      (await import('fs')).readFileSync(new URL('../package.json', import.meta.url), 'utf-8')
+    );
+    console.log(pkg.version);
+    process.exit(0);
+  }
+
   const handler = commands[cmd];
   if (!handler) {
     console.error(`Unknown command: ${cmd}`);
