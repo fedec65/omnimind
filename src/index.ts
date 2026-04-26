@@ -40,6 +40,9 @@ import { EmbeddingEngine } from './core/EmbeddingEngine.js';
 import { SearchEngine } from './core/SearchEngine.js';
 import { AgingPipeline } from './layers/AgingPipeline.js';
 import { IntentPredictor, buildFingerprint } from './prediction/IntentPredictor.js';
+import { MemoryBus } from './bus/MemoryBus.js';
+import { ClaudeAdapter } from './bus/adapters/ClaudeAdapter.js';
+import { type MemoryEvent, type ConflictResolution, type SubscribeInput, type SyncInput } from './bus/types.js';
 
 import {
   type Memory,
@@ -76,11 +79,13 @@ export class Omnimind {
   readonly memoryStore: MemoryStore;
   readonly predictor: IntentPredictor;
   readonly aging: AgingPipeline;
+  readonly bus: MemoryBus;
 
-  private constructor(store: MemoryStore) {
+  private constructor(store: MemoryStore, bus: MemoryBus) {
     this.memoryStore = store;
     this.predictor = new IntentPredictor();
     this.aging = new AgingPipeline();
+    this.bus = bus;
   }
 
   /**
@@ -103,7 +108,15 @@ export class Omnimind {
       throw new Error(`Failed to initialize Omnimind: ${result.error.message}`);
     }
 
-    const omni = new Omnimind(store);
+    // Initialize cross-tool memory bus
+    const bus = new MemoryBus(store);
+    const claudeAdapter = new ClaudeAdapter(bus);
+    const adapterResult = await bus.registerAdapter(claudeAdapter);
+    if (!adapterResult.ok) {
+      console.error(`[Omnimind] Claude adapter failed: ${adapterResult.error.message}`);
+    }
+
+    const omni = new Omnimind(store, bus);
     console.log(`[Omnimind] Initialized at ${dbPath}`);
     return omni;
   }
@@ -243,6 +256,32 @@ export class Omnimind {
   /** Get system statistics */
   async stats(): Promise<Result<StoreStats>> {
     return this.memoryStore.getStats();
+  }
+
+  // ─── Bus Operations ─────────────────────────────────────────────
+
+  /** Subscribe to memory updates from specific wings or rooms */
+  subscribe(toolId: string, input: SubscribeInput): Result<void> {
+    try {
+      const filter: import('./bus/types.js').BusSubscription['filter'] = {};
+      if (input.wings !== undefined) (filter as Record<string, unknown>).wings = input.wings;
+      if (input.eventTypes !== undefined) (filter as Record<string, unknown>).eventTypes = input.eventTypes;
+      this.bus.subscribe(toolId, filter);
+      return ok(undefined);
+    } catch (error) {
+      return err(error instanceof Error ? error : new Error(String(error)));
+    }
+  }
+
+  /** Sync missed events from other tools */
+  async sync(toolId: string, input?: SyncInput): Promise<Result<MemoryEvent[]>> {
+    return this.bus.sync(toolId, input?.since);
+  }
+
+  /** Get unresolved conflict report */
+  getConflictReport(): Result<ConflictResolution[]> {
+    // For now, return empty — full conflict tracking would require persistence
+    return ok([]);
   }
 
   /** Close all resources */

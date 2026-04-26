@@ -32,6 +32,7 @@ const commands: Record<string, (args: string[]) => Promise<void>> = {
   status,
   mine,
   wipe,
+  bus: busCommand,
 };
 
 async function main(): Promise<void> {
@@ -88,6 +89,10 @@ Commands:
     --wing <name>         Target wing
   
   wipe                    Clear all memories (!)
+  
+  bus status              Show connected tools and subscriptions
+  bus sync [tool-id]      Pull updates from specific tool
+  bus conflicts           List unresolved conflicts
 
 Examples:
   omnimind init
@@ -277,6 +282,74 @@ async function mine(args: string[]): Promise<void> {
   }
 
   console.log(`Mined ${count} memories from ${targetPath} into ${wing}`);
+  omni.close();
+}
+
+async function busCommand(args: string[]): Promise<void> {
+  const subcmd = args[0];
+  if (!subcmd || subcmd === '--help') {
+    console.log(`
+Bus commands:
+  bus status          Show connected adapters and bus statistics
+  bus sync [tool]     Sync missed events from a tool (default: all)
+  bus conflicts       List unresolved conflicts
+`);
+    return;
+  }
+
+  const omni = await Omnimind.create();
+
+  switch (subcmd) {
+    case 'status': {
+      const stats = omni.bus.getStats();
+      console.log('Memory Bus Status');
+      console.log('=================');
+      console.log(`Adapters: ${stats.adapterCount}`);
+      console.log(`Subscriptions: ${stats.subscriptionCount}`);
+      console.log(`Events published: ${stats.eventsPublished}`);
+      console.log(`Events routed: ${stats.eventsRouted}`);
+      console.log(`Conflicts: ${stats.conflictsDetected} detected, ${stats.conflictsResolved} resolved`);
+      console.log(`Dead letter: ${stats.deadLetterCount}`);
+      if (Object.keys(stats.vectorClock).length > 0) {
+        console.log('Vector clock:');
+        for (const [tool, count] of Object.entries(stats.vectorClock)) {
+          console.log(`  ${tool}: ${count}`);
+        }
+      }
+      break;
+    }
+    case 'sync': {
+      const toolId = args[1] ?? 'cli-client';
+      const result = await omni.sync(toolId);
+      if (result.ok) {
+        console.log(`Synced ${result.value.length} events`);
+        for (const event of result.value) {
+          console.log(`  [${event.sourceTool}] ${event.payload.wing ?? 'general'}: ${event.payload.content?.substring(0, 100) ?? ''}`);
+        }
+      } else {
+        console.error(`Error: ${result.error.message}`);
+      }
+      break;
+    }
+    case 'conflicts': {
+      const report = omni.getConflictReport();
+      if (report.ok && report.value.length === 0) {
+        console.log('No unresolved conflicts.');
+      } else if (report.ok) {
+        console.log(`Unresolved conflicts: ${report.value.length}`);
+        for (const c of report.value) {
+          console.log(`  ${c.winningEvent.id} vs ${c.losingEvent.id}: ${c.explanation}`);
+        }
+      } else {
+        console.error(`Error: ${report.error.message}`);
+      }
+      break;
+    }
+    default:
+      console.error(`Unknown bus command: ${subcmd}`);
+      process.exit(1);
+  }
+
   omni.close();
 }
 

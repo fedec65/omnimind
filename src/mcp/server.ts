@@ -27,6 +27,9 @@ import { z } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import { MemoryStore } from '../core/MemoryStore.js';
 import { IntentPredictor, buildFingerprint } from '../prediction/IntentPredictor.js';
+import { MemoryBus } from '../bus/MemoryBus.js';
+import { ClaudeAdapter } from '../bus/adapters/ClaudeAdapter.js';
+import { EventType } from '../bus/types.js';
 import { join } from 'path';
 import { homedir } from 'os';
 
@@ -55,18 +58,31 @@ const PredictInput = z.object({
   recentTools: z.array(z.string()).optional().describe('Recently used tools'),
 });
 
+const SubscribeInput = z.object({
+  wings: z.array(z.string()).optional().describe('Wings to subscribe to'),
+  rooms: z.array(z.string()).optional().describe('Rooms to subscribe to'),
+  eventTypes: z.array(z.enum(['create', 'update', 'delete'])).optional().describe('Event types to subscribe to'),
+});
+
+const SyncInput = z.object({
+  since: z.number().optional().describe('Unix timestamp — get events after this time'),
+  toolId: z.string().optional().describe('Only sync from specific tool (e.g., "cursor")'),
+});
+
 // ─── Server Implementation ────────────────────────────────────────
 
 export class OmnimindMcpServer {
   private server: Server;
   private store: MemoryStore;
   private predictor: IntentPredictor;
+  private bus: MemoryBus;
   private initialized = false;
 
   constructor() {
     const dbPath = join(homedir(), '.omnimind', 'memory.db');
     this.store = new MemoryStore({ dbPath });
     this.predictor = new IntentPredictor();
+    this.bus = new MemoryBus(this.store);
 
     this.server = new Server(
       {
@@ -88,6 +104,14 @@ export class OmnimindMcpServer {
     if (!result.ok) {
       throw new Error(`Failed to initialize memory store: ${result.error.message}`);
     }
+
+    // Initialize bus with Claude adapter
+    const claudeAdapter = new ClaudeAdapter(this.bus);
+    const busResult = await this.bus.registerAdapter(claudeAdapter);
+    if (!busResult.ok) {
+      console.error(`[Omnimind MCP] Claude adapter failed: ${busResult.error.message}`);
+    }
+
     this.initialized = true;
     console.error('[Omnimind MCP] Server initialized');
   }
@@ -126,6 +150,16 @@ export class OmnimindMcpServer {
           description: 'Get system health and memory statistics.',
           inputSchema: { type: 'object', properties: {} },
         },
+        {
+          name: 'omnimind_subscribe',
+          description: 'Subscribe to memory updates from a specific wing or room. Get notified when other tools update shared memories.',
+          inputSchema: convertZodToJsonSchema(SubscribeInput),
+        },
+        {
+          name: 'omnimind_sync',
+          description: 'Sync memories from other tools. Call this when starting a new session to pull missed updates.',
+          inputSchema: convertZodToJsonSchema(SyncInput),
+        },
       ],
     }));
 
@@ -141,6 +175,10 @@ export class OmnimindMcpServer {
             return await this.handlePredict(request.params.arguments);
           case 'omnimind_status':
             return await this.handleStatus();
+          case 'omnimind_subscribe':
+            return await this.handleSubscribe(request.params.arguments);
+          case 'omnimind_sync':
+            return await this.handleSync(request.params.arguments);
           default:
             throw new Error(`Unknown tool: ${request.params.name}`);
         }
@@ -281,6 +319,7 @@ export class OmnimindMcpServer {
       .join('\n');
 
     const predStats = this.predictor.getStats();
+    const busStats = this.bus.getStats();
 
     return {
       content: [
@@ -294,7 +333,65 @@ export class OmnimindMcpServer {
             layerInfo,
             `Database size: ${(s.databaseSizeBytes / 1024 / 1024).toFixed(1)} MB`,
             `Predictor patterns: ${predStats.totalPatterns} across ${predStats.uniqueContexts} contexts`,
+            ``,
+            `Bus:`,
+            `  Adapters: ${busStats.adapterCount}`,
+            `  Events published: ${busStats.eventsPublished}`,
+            `  Events routed: ${busStats.eventsRouted}`,
+            `  Conflicts: ${busStats.conflictsDetected} detected, ${busStats.conflictsResolved} resolved`,
           ].join('\n'),
+        },
+      ],
+    };
+  }
+
+  private async handleSubscribe(args: unknown) {
+    const input = SubscribeInput.parse(args);
+
+    // Use a generic tool ID for MCP subscriptions
+    const toolId = 'mcp-client';
+
+    const eventTypes = input.eventTypes ?? [EventType.Create, EventType.Update, EventType.Delete];
+
+    const filter: import('../bus/types.js').BusSubscription['filter'] = {};
+    if (input.wings !== undefined) (filter as Record<string, unknown>).wings = input.wings;
+    (filter as Record<string, unknown>).eventTypes = eventTypes as import('../bus/types.js').EventType[];
+    this.bus.subscribe(toolId, filter);
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: `Subscribed to ${input.wings?.join(', ') ?? 'all wings'} for events: ${eventTypes.join(', ')}`,
+        },
+      ],
+    };
+  }
+
+  private async handleSync(args: unknown) {
+    const input = SyncInput.parse(args);
+    const toolId = input.toolId ?? 'mcp-client';
+
+    const events = await this.bus.sync(toolId, input.since);
+    if (!events.ok) {
+      throw events.error;
+    }
+
+    if (events.value.length === 0) {
+      return {
+        content: [{ type: 'text', text: 'No new events to sync.' }],
+      };
+    }
+
+    const lines = events.value.map((e) =>
+      `[${e.sourceTool}] ${e.payload.wing ?? 'general'}: ${e.payload.content?.substring(0, 200) ?? ''}`,
+    );
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: `Synced ${events.value.length} events:\n${lines.join('\n')}`,
         },
       ],
     };
