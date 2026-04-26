@@ -1,9 +1,14 @@
 {
   "name": "omnimind",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "description": "Proactive, cross-tool memory system for LLMs — 100% local, privacy-first",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "files": [
+    "dist/",
+    "README.md",
+    "LICENSE"
+  ],
   "bin": {
     "omnimind": "dist/cli.js",
     "omnimind-mcp": "dist/mcp-server.js"

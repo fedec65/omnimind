@@ -40,6 +40,9 @@ import { EmbeddingEngine } from './core/EmbeddingEngine.js';
 import { SearchEngine } from './core/SearchEngine.js';
 import { AgingPipeline } from './layers/AgingPipeline.js';
 import { IntentPredictor, buildFingerprint } from './prediction/IntentPredictor.js';
+import { PatternStore } from './prediction/PatternStore.js';
+import { ActivityTracker } from './prediction/ActivityTracker.js';
+import { ContextInjector } from './prediction/ContextInjector.js';
 import { MemoryBus } from './bus/MemoryBus.js';
 import { ClaudeAdapter } from './bus/adapters/ClaudeAdapter.js';
 import { type MemoryEvent, type ConflictResolution, type SubscribeInput, type SyncInput } from './bus/types.js';
@@ -80,12 +83,25 @@ export class Omnimind {
   readonly predictor: IntentPredictor;
   readonly aging: AgingPipeline;
   readonly bus: MemoryBus;
+  readonly activityTracker: ActivityTracker;
+  readonly contextInjector: ContextInjector;
+  private readonly patternStore: PatternStore;
 
-  private constructor(store: MemoryStore, bus: MemoryBus) {
+  private constructor(
+    store: MemoryStore,
+    bus: MemoryBus,
+    predictor: IntentPredictor,
+    patternStore: PatternStore,
+    activityTracker: ActivityTracker,
+    contextInjector: ContextInjector,
+  ) {
     this.memoryStore = store;
-    this.predictor = new IntentPredictor();
+    this.predictor = predictor;
     this.aging = new AgingPipeline();
     this.bus = bus;
+    this.patternStore = patternStore;
+    this.activityTracker = activityTracker;
+    this.contextInjector = contextInjector;
   }
 
   /**
@@ -108,6 +124,12 @@ export class Omnimind {
       throw new Error(`Failed to initialize Omnimind: ${result.error.message}`);
     }
 
+    // Initialize prediction with persistence
+    const predictor = new IntentPredictor();
+    const patternDbPath = join(dataDir, 'patterns.db');
+    const patternStore = new PatternStore({ dbPath: patternDbPath });
+    predictor.attachStore(patternStore);
+
     // Initialize cross-tool memory bus
     const bus = new MemoryBus(store);
     const claudeAdapter = new ClaudeAdapter(bus);
@@ -116,7 +138,19 @@ export class Omnimind {
       console.error(`[Omnimind] Claude adapter failed: ${adapterResult.error.message}`);
     }
 
-    const omni = new Omnimind(store, bus);
+    // Initialize activity tracking and context injection
+    const activityTracker = new ActivityTracker(predictor, bus, { watchDir: process.cwd() });
+    const activityStart = activityTracker.start();
+    if (!activityStart.ok) {
+      console.error(`[Omnimind] Activity tracker failed: ${activityStart.error.message}`);
+    }
+
+    const contextInjector = new ContextInjector(predictor, async (id) => {
+      const r = await store.get(id);
+      return r.ok ? r.value : null;
+    });
+
+    const omni = new Omnimind(store, bus, predictor, patternStore, activityTracker, contextInjector);
     console.log(`[Omnimind] Initialized at ${dbPath}`);
     return omni;
   }
@@ -284,8 +318,28 @@ export class Omnimind {
     return ok([]);
   }
 
+  /**
+   * Get automatic context injection for the current activity.
+   *
+   * Uses the ActivityTracker's current fingerprint to predict
+   * and format relevant memories.
+   */
+  async getContextInjection(): Promise<Result<string>> {
+    const fingerprint = this.activityTracker.getCurrentFingerprint();
+    const injection = await this.contextInjector.inject(fingerprint);
+    if (!injection.ok) return err(injection.error);
+    return ok(injection.value.text);
+  }
+
+  /** Get activity tracker stats for debugging */
+  getActivityStats(): { isRunning: boolean; recentFiles: number; recentTools: number } {
+    return this.activityTracker.getStats();
+  }
+
   /** Close all resources */
   close(): void {
+    this.activityTracker.stop();
+    this.patternStore.close();
     this.memoryStore.close();
   }
 }

@@ -29,6 +29,8 @@ const commands: Record<string, (args: string[]) => Promise<void>> = {
   store,
   search,
   predict,
+  activity,
+  inject,
   status,
   mine,
   wipe,
@@ -81,6 +83,10 @@ Commands:
     --project <path>      Project directory
     --branch <name>       Git branch
     --file <path>         Current file
+  
+  activity                Show recent activity and pattern stats
+  
+  inject                  Print formatted context injection string
   
   status                  Show system status
   
@@ -205,6 +211,42 @@ async function predict(args: string[]): Promise<void> {
           console.log(`  • ${mem.value.content.substring(0, 200)} (${(pred.confidence * 100).toFixed(0)}%)`);
         }
       }
+    }
+  } else {
+    console.error(`Error: ${result.error.message}`);
+  }
+
+  omni.close();
+}
+
+async function activity(): Promise<void> {
+  const omni = await Omnimind.create();
+  const stats = omni.getActivityStats();
+  const predStats = omni.predictor.getStats();
+
+  console.log('Activity Tracker');
+  console.log('================');
+  console.log(`Running: ${stats.isRunning}`);
+  console.log(`Recent files tracked: ${stats.recentFiles}`);
+  console.log(`Recent tools tracked: ${stats.recentTools}`);
+  console.log('');
+  console.log('Predictor Patterns');
+  console.log('==================');
+  console.log(`Total patterns: ${predStats.totalPatterns}`);
+  console.log(`Unique contexts: ${predStats.uniqueContexts}`);
+
+  omni.close();
+}
+
+async function inject(): Promise<void> {
+  const omni = await Omnimind.create();
+  const result = await omni.getContextInjection();
+
+  if (result.ok) {
+    if (result.value) {
+      console.log(result.value);
+    } else {
+      console.log('No context injection available.');
     }
   } else {
     console.error(`Error: ${result.error.message}`);

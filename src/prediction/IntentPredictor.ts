@@ -20,6 +20,7 @@ import {
   err,
 } from '../core/types.js';
 import { createHash } from 'crypto';
+import { type PatternStore } from './PatternStore.js';
 
 /** A single prediction with confidence score */
 export interface Prediction {
@@ -70,6 +71,7 @@ export interface IntentPredictorConfig {
 export class IntentPredictor {
   private readonly config: Required<IntentPredictorConfig>;
   private patterns: Map<string, ActivityPattern[]> = new Map();
+  private store: PatternStore | null = null;
 
   constructor(config: IntentPredictorConfig = {}) {
     this.config = {
@@ -78,6 +80,40 @@ export class IntentPredictor {
       patternWindowDays: config.patternWindowDays ?? 30,
       minFrequency: config.minFrequency ?? 2,
     };
+  }
+
+  /** Attach a PatternStore for persistence across restarts */
+  attachStore(store: PatternStore): void {
+    this.store = store;
+    const loaded = store.load();
+    for (const p of loaded) {
+      const existing = this.patterns.get(p.contextSignature) ?? [];
+      const idx = existing.findIndex((e) => e.memoryId === p.memoryId);
+      if (idx >= 0) {
+        existing[idx] = p;
+      } else {
+        existing.push(p);
+      }
+      this.patterns.set(p.contextSignature, existing);
+    }
+  }
+
+  /** Flush all patterns to the attached store */
+  persist(): void {
+    if (!this.store) return;
+    const all: import('./PatternStore.js').StoredPattern[] = [];
+    for (const [sig, list] of this.patterns) {
+      for (const p of list) {
+        all.push({
+          contextSignature: sig,
+          memoryId: p.memoryId,
+          frequency: p.frequency,
+          lastAccessed: p.lastAccessed,
+          avgConfidence: p.avgConfidence,
+        });
+      }
+    }
+    this.store.saveBatch(all);
   }
 
   /**
@@ -111,6 +147,18 @@ export class IntentPredictor {
     }
 
     this.patterns.set(signature, existing);
+
+    // Persist to store if attached
+    if (this.store) {
+      const pattern = existing.find((p) => p.memoryId === memoryId)!;
+      this.store.save({
+        contextSignature: signature,
+        memoryId: pattern.memoryId,
+        frequency: pattern.frequency,
+        lastAccessed: pattern.lastAccessed,
+        avgConfidence: pattern.avgConfidence,
+      });
+    }
   }
 
   /**

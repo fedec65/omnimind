@@ -21,6 +21,10 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
+  ListResourcesRequestSchema,
+  ReadResourceRequestSchema,
+  ListPromptsRequestSchema,
+  GetPromptRequestSchema,
   type CallToolRequest,
 } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
@@ -87,16 +91,20 @@ export class OmnimindMcpServer {
     this.server = new Server(
       {
         name: 'omnimind',
-        version: '0.1.0',
+        version: '0.2.0',
       },
       {
         capabilities: {
           tools: {},
+          resources: {},
+          prompts: {},
         },
       },
     );
 
     this.setupHandlers();
+    this.setupResourceHandlers();
+    this.setupPromptHandlers();
   }
 
   async init(): Promise<void> {
@@ -304,6 +312,146 @@ export class OmnimindMcpServer {
         },
       ],
     };
+  }
+
+  private setupResourceHandlers(): void {
+    this.server.setRequestHandler(ListResourcesRequestSchema, async () => ({
+      resources: [
+        {
+          uri: 'omnimind://context/predictions',
+          name: 'Omnimind Predictions',
+          mimeType: 'application/json',
+          description: 'Current memory predictions based on activity context',
+        },
+        {
+          uri: 'omnimind://stats/overview',
+          name: 'Omnimind Stats',
+          mimeType: 'application/json',
+          description: 'System health and memory statistics',
+        },
+      ],
+    }));
+
+    this.server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+      const uri = request.params.uri;
+
+      if (uri === 'omnimind://context/predictions') {
+        const fingerprint = buildFingerprint({
+          projectPath: process.cwd(),
+          gitBranch: 'unknown',
+          currentFile: 'unknown',
+          recentTools: [],
+          recentWings: [],
+          recentRooms: [],
+        });
+
+        const predictions = await this.predictor.predict(fingerprint, async (id) => {
+          const result = await this.store.get(id);
+          return result.ok ? result.value : null;
+        });
+
+        const predStats = this.predictor.getStats();
+        return {
+          contents: [
+            {
+              uri,
+              mimeType: 'application/json',
+              text: JSON.stringify(
+                {
+                  timestamp: Date.now(),
+                  predictions: predictions.ok ? predictions.value : [],
+                  stats: predStats,
+                },
+                null,
+                2,
+              ),
+            },
+          ],
+        };
+      }
+
+      if (uri === 'omnimind://stats/overview') {
+        const stats = await this.store.getStats();
+        const busStats = this.bus.getStats();
+        return {
+          contents: [
+            {
+              uri,
+              mimeType: 'application/json',
+              text: JSON.stringify(
+                {
+                  memories: stats.ok ? stats.value : null,
+                  bus: busStats,
+                  predictor: this.predictor.getStats(),
+                },
+                null,
+                2,
+              ),
+            },
+          ],
+        };
+      }
+
+      throw new Error(`Unknown resource: ${uri}`);
+    });
+  }
+
+  private setupPromptHandlers(): void {
+    this.server.setRequestHandler(ListPromptsRequestSchema, async () => ({
+      prompts: [
+        {
+          name: 'memory-aware',
+          description: 'System prompt with injected memory predictions',
+        },
+      ],
+    }));
+
+    this.server.setRequestHandler(GetPromptRequestSchema, async (request) => {
+      if (request.params.name === 'memory-aware') {
+        const fingerprint = buildFingerprint({
+          projectPath: process.cwd(),
+          gitBranch: 'unknown',
+          currentFile: 'unknown',
+          recentTools: [],
+          recentWings: [],
+          recentRooms: [],
+        });
+
+        const predictions = await this.predictor.predict(fingerprint, async (id) => {
+          const result = await this.store.get(id);
+          return result.ok ? result.value : null;
+        });
+
+        let injectionText = '';
+        if (predictions.ok && predictions.value.length > 0) {
+          const lines = [];
+          for (const pred of predictions.value.slice(0, 3)) {
+            const mem = await this.store.get(pred.memoryId);
+            if (mem.ok && mem.value) {
+              lines.push(`[${mem.value.wing}] ${mem.value.content.substring(0, 200)}`);
+            }
+          }
+          if (lines.length > 0) {
+            injectionText = `\n<omnimind_predictions>\n${lines.join('\n')}\n</omnimind_predictions>\n`;
+          }
+        }
+
+        return {
+          description: 'Memory-aware system prompt',
+          messages: [
+            {
+              role: 'system',
+              content: {
+                type: 'text',
+                text: `You have access to the user's Omnimind memory system.${injectionText}`,
+              },
+            },
+          ],
+        };
+      }
+
+      throw new Error(`Unknown prompt: ${request.params.name}`);
+    });
   }
 
   private async handleStatus() {
