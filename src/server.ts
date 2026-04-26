@@ -74,7 +74,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
 
   // Health check
   if (path === '/api/health' && method === 'GET') {
-    sendJson(res, 200, { status: 'ok', version: '0.3.0' });
+    sendJson(res, 200, { status: 'ok', version: '0.4.0' });
     return;
   }
 
