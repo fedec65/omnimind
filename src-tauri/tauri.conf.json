@@ -1,0 +1,58 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Omnimind Explorer",
+  "version": "0.3.0",
+  "identifier": "com.omnimind.app",
+  "build": {
+    "beforeDevCommand": "cd gui && npm run dev",
+    "beforeBuildCommand": "cd gui && npm run build",
+    "frontendDist": "../gui/dist",
+    "devUrl": "http://localhost:1420"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "title": "Omnimind Explorer",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 800,
+        "minHeight": 600,
+        "center": true,
+        "resizable": true,
+        "fullscreen": false,
+        "transparent": false,
+        "decorations": true
+      }
+    ],
+    "security": {
+      "csp": null,
+      "dangerousDisableAssetCspModification": false,
+      "capabilities": [
+        {
+          "identifier": "default",
+          "description": "Default permissions for Omnimind Explorer",
+          "windows": ["main"],
+          "permissions": [
+            "core:default",
+            "shell:default"
+          ]
+        }
+      ]
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["app", "dmg", "msi", "appimage", "deb"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "category": "DeveloperTool",
+    "shortDescription": "Visual memory explorer for Omnimind",
+    "longDescription": "A GUI that lets you see, explore, and manage your Omnimind memory visually."
+  }
+}

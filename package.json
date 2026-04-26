@@ -11,7 +11,8 @@
   ],
   "bin": {
     "omnimind": "dist/cli.js",
-    "omnimind-mcp": "dist/mcp-server.js"
+    "omnimind-mcp": "dist/mcp-server.js",
+    "omnimind-server": "dist/server.js"
   },
   "scripts": {
     "build": "tsc",
@@ -26,7 +27,11 @@
     "typecheck": "tsc --noEmit",
     "prepare": "npm run build",
     "start": "node dist/index.js",
-    "mcp": "node dist/mcp-server.js"
+    "mcp": "node dist/mcp-server.js",
+    "server": "node dist/server.js",
+    "server:dev": "tsx watch src/server.ts",
+    "gui:dev": "tauri dev",
+    "gui:build": "tauri build"
   },
   "keywords": [
     "llm",
@@ -54,6 +59,7 @@
     "zod-to-json-schema": "^3.25.2"
   },
   "devDependencies": {
+    "@tauri-apps/cli": "^2.10.1",
     "@types/better-sqlite3": "^7.6.10",
     "@types/node": "^20.14.0",
     "@typescript-eslint/eslint-plugin": "^7.13.0",
