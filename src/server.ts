@@ -17,11 +17,33 @@
  *   GET  /api/graph?entityId=&depth=
  *   GET  /api/bus/status
  *   POST /api/bus/sync
+ *   POST /api/import          { json }
+ *   GET  /api/export
+ *   POST /api/age
  */
 
 import { createServer, type IncomingMessage, type ServerResponse } from 'http';
 import { URL } from 'url';
+import { readFile } from 'fs/promises';
+import { resolve, extname } from 'path';
+import { fileURLToPath } from 'url';
 import { Omnimind } from './index.js';
+import { type EntityType } from './core/types.js';
+
+const __dirname = fileURLToPath(new URL('.', import.meta.url));
+const STATIC_DIR = resolve(__dirname, '../gui/dist');
+
+const MIME_TYPES: Record<string, string> = {
+  '.html': 'text/html',
+  '.js': 'application/javascript',
+  '.css': 'text/css',
+  '.json': 'application/json',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.svg': 'image/svg+xml',
+  '.ico': 'image/x-icon',
+};
 
 const PORT = process.env.OMNIMIND_PORT ? parseInt(process.env.OMNIMIND_PORT, 10) : 8844;
 const DATA_DIR = process.env.OMNIMIND_DATA_DIR;
@@ -67,14 +89,38 @@ async function main(): Promise<void> {
   process.on('SIGINT', () => shutdown(server));
 }
 
+async function serveStatic(_req: IncomingMessage, res: ServerResponse, urlPath: string): Promise<void> {
+  const filePath = resolve(STATIC_DIR, urlPath === '/' ? 'index.html' : urlPath.slice(1));
+  console.log('[Static] Request:', urlPath, '→ trying:', filePath);
+  try {
+    const data = await readFile(filePath);
+    const ext = extname(filePath);
+    res.writeHead(200, { 'Content-Type': MIME_TYPES[ext] || 'application/octet-stream' });
+    res.end(data);
+  } catch {
+    try {
+      const data = await readFile(resolve(STATIC_DIR, 'index.html'));
+      res.writeHead(200, { 'Content-Type': 'text/html', 'Cache-Control': 'no-cache, no-store, must-revalidate' });
+      res.end(data);
+    } catch {
+      sendJson(res, 404, { error: 'Not found' });
+    }
+  }
+}
+
 async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
   const url = new URL(req.url ?? '/', `http://localhost:${serverPort}`);
   const method = req.method ?? 'GET';
   const path = url.pathname;
 
+  if (method === 'GET' && !path.startsWith('/api/')) {
+    await serveStatic(req, res, path);
+    return;
+  }
+
   // Health check
   if (path === '/api/health' && method === 'GET') {
-    sendJson(res, 200, { status: 'ok', version: '0.4.1' });
+    sendJson(res, 200, { status: 'ok', version: '0.5.0' });
     return;
   }
 
@@ -85,8 +131,9 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
       const limit = parseInt(url.searchParams.get('limit') ?? '10', 10);
       const wing = url.searchParams.get('wing') ?? undefined;
       const room = url.searchParams.get('room') ?? undefined;
+      const namespace = url.searchParams.get('namespace') ?? undefined;
 
-      const result = await omni!.search(query, { limit, wing, room });
+      const result = await omni!.search(query, { limit, wing, room, namespace });
       if (!result.ok) {
         sendJson(res, 500, { error: result.error.message });
         return;
@@ -101,11 +148,12 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
       const wing = body.wing as string | undefined;
       const room = body.room as string | undefined;
       const sourceTool = body.sourceTool as string | undefined;
+      const namespace = body.namespace as string | undefined;
       if (!content || !wing) {
         sendJson(res, 400, { error: 'content and wing are required' });
         return;
       }
-      const result = await omni!.store(content, { wing, room, sourceTool });
+      const result = await omni!.store(content, { wing, room, sourceTool, namespace });
       if (!result.ok) {
         sendJson(res, 500, { error: result.error.message });
         return;
@@ -192,11 +240,98 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
     return;
   }
 
+  // Entities
+  if (path === '/api/entities' && method === 'GET') {
+    const opts: { type?: EntityType; search?: string; limit?: number } = {};
+    const type = url.searchParams.get('type');
+    const search = url.searchParams.get('search');
+    const limit = url.searchParams.get('limit');
+    const validEntityTypes: EntityType[] = ['person', 'project', 'concept', 'file', 'api', 'class'];
+    if (type && validEntityTypes.includes(type as EntityType)) {
+      opts.type = type as EntityType;
+    }
+    if (search) opts.search = search;
+    if (limit) opts.limit = parseInt(limit, 10);
+    const result = omni!.getEntities(opts);
+    if (!result.ok) {
+      sendJson(res, 500, { error: result.error.message });
+      return;
+    }
+    sendJson(res, 200, { entities: result.value });
+    return;
+  }
+
+  // Relations
+  if (path === '/api/relations' && method === 'GET') {
+    const opts: { subjectId?: string; objectId?: string; predicate?: string; limit?: number } = {};
+    const subjectId = url.searchParams.get('subjectId');
+    const objectId = url.searchParams.get('objectId');
+    const predicate = url.searchParams.get('predicate');
+    const limit = url.searchParams.get('limit');
+    if (subjectId) opts.subjectId = subjectId;
+    if (objectId) opts.objectId = objectId;
+    if (predicate) opts.predicate = predicate;
+    if (limit) opts.limit = parseInt(limit, 10);
+    const result = omni!.getRelations(opts);
+    if (!result.ok) {
+      sendJson(res, 500, { error: result.error.message });
+      return;
+    }
+    sendJson(res, 200, { relations: result.value });
+    return;
+  }
+
   // Graph
   if (path === '/api/graph' && method === 'GET') {
-    // Placeholder — full graph query not yet implemented in core
-    sendJson(res, 200, { entities: [], relations: [] });
+    const entityId = url.searchParams.get('entityId') ?? undefined;
+    const depth = parseInt(url.searchParams.get('depth') ?? '1', 10);
+    if (entityId) {
+      const result = omni!.getSubgraph(entityId, depth);
+      if (!result.ok) {
+        sendJson(res, 500, { error: result.error.message });
+        return;
+      }
+      sendJson(res, 200, result.value);
+      return;
+    }
+    // Fallback: return all entities and relations
+    const entResult = omni!.getEntities({ limit: 500 });
+    const relResult = omni!.getRelations({ limit: 1000 });
+    if (!entResult.ok || !relResult.ok) {
+      sendJson(res, 500, { error: 'Failed to load graph data' });
+      return;
+    }
+    sendJson(res, 200, { entities: entResult.value, relations: relResult.value });
     return;
+  }
+
+  // Settings
+  if (path === '/api/settings') {
+    if (method === 'GET') {
+      const result = omni!.getSettings();
+      if (!result.ok) {
+        sendJson(res, 500, { error: result.error.message });
+        return;
+      }
+      sendJson(res, 200, result.value);
+      return;
+    }
+    if (method === 'POST') {
+      const body = await readBody(req);
+      const key = body.key as string | undefined;
+      const value = body.value as string | undefined;
+      if (!key || value === undefined) {
+        sendJson(res, 400, { error: 'key and value are required' });
+        return;
+      }
+      const result = omni!.setSetting(key, String(value));
+      if (!result.ok) {
+        sendJson(res, 500, { error: result.error.message });
+        return;
+      }
+      sendJson(res, 200, { ok: true });
+      return;
+    }
   }
 
   // Bus status
@@ -226,6 +361,45 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
       return;
     }
     sendJson(res, 200, { injection: result.value });
+    return;
+  }
+
+  // Import memories from JSON
+  if (path === '/api/import' && method === 'POST') {
+    const body = await readBody(req);
+    const json = body.json as string | undefined;
+    if (!json) {
+      sendJson(res, 400, { error: 'json is required' });
+      return;
+    }
+    const result = await omni!.importFromJson(json);
+    if (!result.ok) {
+      sendJson(res, 500, { error: result.error.message });
+      return;
+    }
+    sendJson(res, 200, { imported: result.value });
+    return;
+  }
+
+  // Export memories to JSON
+  if (path === '/api/export' && method === 'GET') {
+    const result = omni!.exportToJson();
+    if (!result.ok) {
+      sendJson(res, 500, { error: result.error.message });
+      return;
+    }
+    sendJson(res, 200, JSON.parse(result.value));
+    return;
+  }
+
+  // Bulk age all eligible memories
+  if (path === '/api/age' && method === 'POST') {
+    const result = await omni!.bulkAge();
+    if (!result.ok) {
+      sendJson(res, 500, { error: result.error.message });
+      return;
+    }
+    sendJson(res, 200, result.value);
     return;
   }
 

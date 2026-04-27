@@ -21,7 +21,7 @@ import {
 } from './types.js';
 import { ConflictResolver } from './ConflictResolver.js';
 import { type MemoryStore } from '../core/MemoryStore.js';
-import { type MemoryMeta, type Result, ok, err } from '../core/types.js';
+import { type MemoryMeta, type Memory, type Result, ok, err } from '../core/types.js';
 
 export class MemoryBus {
   private adapters = new Map<string, ToolAdapter>();
@@ -170,6 +170,19 @@ export class MemoryBus {
     return this.deadLetter;
   }
 
+  // ─── Direct Store Operations ────────────────────────────────────
+
+  /** Store conversation turns directly, bypassing the event bus pipeline.
+   *  Used by adapters that need batch storage (e.g., auto-save from Claude Code).
+   */
+  async storeTurns(turns: string[], meta: MemoryMeta): Promise<Result<Memory[]>> {
+    try {
+      return this.store.storeTurns(turns, meta);
+    } catch (error) {
+      return err(error instanceof Error ? error : new Error(String(error)));
+    }
+  }
+
   // ─── Private helpers ────────────────────────────────────────────
 
   private async detectConflict(event: MemoryEvent): Promise<Result<import('./types.js').ConflictResolution | null>> {
@@ -215,6 +228,7 @@ export class MemoryBus {
     const meta = {
       wing: event.payload.wing ?? 'general',
       sourceTool: event.sourceTool,
+      namespace: event.payload.namespace ?? 'default',
       sourceId: event.memoryId ?? undefined,
       validFrom: event.payload.validFrom,
       validTo: event.payload.validTo,
@@ -260,6 +274,10 @@ export class MemoryBus {
 
     if (filter.wings && event.payload.wing) {
       if (!filter.wings.includes(event.payload.wing)) return false;
+    }
+
+    if (filter.namespaces && event.payload.namespace) {
+      if (!filter.namespaces.includes(event.payload.namespace)) return false;
     }
 
     if (filter.eventTypes && !filter.eventTypes.includes(event.eventType)) {

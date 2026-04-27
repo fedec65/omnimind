@@ -51,7 +51,7 @@ describe('HTTP Server', () => {
   it('should return health status', async () => {
     const data = await fetchApi('/api/health');
     expect(data.status).toBe('ok');
-    expect(data.version).toBe('0.3.0');
+    expect(data.version).toBe('0.4.2');
   });
 
   it('should create and retrieve a memory', async () => {

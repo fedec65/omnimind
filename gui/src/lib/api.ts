@@ -31,6 +31,27 @@ export interface Prediction {
   reason: string;
 }
 
+export interface Entity {
+  id: string;
+  name: string;
+  type: string;
+  description: string | null;
+  firstSeen: number;
+  lastSeen: number;
+  mentionCount: number;
+}
+
+export interface Relation {
+  id: string;
+  subjectId: string;
+  predicate: string;
+  objectId: string;
+  validFrom: number | null;
+  validTo: number | null;
+  sourceMemory: string | null;
+  confidence: number;
+}
+
 export interface BusStats {
   adapterCount: number;
   subscriptionCount: number;
@@ -67,22 +88,23 @@ export const api = {
   search: (q: string, limit = 20) =>
     fetchJson<{ results: SearchResult[] }>(`/api/search?q=${encodeURIComponent(q)}&limit=${limit}`),
 
-  memories: (q?: string, limit = 50, wing?: string, room?: string) => {
+  memories: (q?: string, limit = 50, wing?: string, room?: string, namespace?: string) => {
     const params = new URLSearchParams();
     if (q) params.set('q', q);
     params.set('limit', String(limit));
     if (wing) params.set('wing', wing);
     if (room) params.set('room', room);
+    if (namespace) params.set('namespace', namespace);
     return fetchJson<{ memories: SearchResult[] }>(`/api/memories?${params.toString()}`);
   },
 
   getMemory: (id: string) => fetchJson<{ memory: Memory }>(`/api/memories/${encodeURIComponent(id)}`),
 
-  createMemory: (content: string, wing: string, room?: string) =>
+  createMemory: (content: string, wing: string, room?: string, namespace?: string) =>
     fetchJson<{ memory: Memory }>('/api/memories', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ content, wing, room }),
+      body: JSON.stringify({ content, wing, room, namespace }),
     }),
 
   deleteMemory: (id: string) =>
@@ -93,4 +115,50 @@ export const api = {
   stats: () => fetchJson<SystemStats>('/api/stats'),
 
   context: () => fetchJson<{ injection: string }>('/api/context'),
+
+  entities: (opts?: { type?: string; search?: string; limit?: number }) => {
+    const params = new URLSearchParams();
+    if (opts?.type) params.set('type', opts.type);
+    if (opts?.search) params.set('search', opts.search);
+    params.set('limit', String(opts?.limit ?? 100));
+    return fetchJson<{ entities: import('./api').Entity[] }>(`/api/entities?${params.toString()}`);
+  },
+
+  relations: (opts?: { subjectId?: string; objectId?: string; predicate?: string; limit?: number }) => {
+    const params = new URLSearchParams();
+    if (opts?.subjectId) params.set('subjectId', opts.subjectId);
+    if (opts?.objectId) params.set('objectId', opts.objectId);
+    if (opts?.predicate) params.set('predicate', opts.predicate);
+    params.set('limit', String(opts?.limit ?? 100));
+    return fetchJson<{ relations: import('./api').Relation[] }>(`/api/relations?${params.toString()}`);
+  },
+
+  graph: (entityId?: string, depth?: number) => {
+    const params = new URLSearchParams();
+    if (depth !== undefined) params.set('depth', String(depth));
+    const path = entityId ? `/api/graph/${encodeURIComponent(entityId)}` : '/api/graph';
+    return fetchJson<{ entities: import('./api').Entity[]; relations: import('./api').Relation[] }>(`${path}?${params.toString()}`);
+  },
+
+  settings: () => fetchJson<Record<string, string>>('/api/settings'),
+
+  setSetting: (key: string, value: string) =>
+    fetchJson<{ ok: boolean }>('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key, value }),
+    }),
+
+  importMemories: (json: string) =>
+    fetchJson<{ imported: number }>('/api/import', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ json }),
+    }),
+
+  exportMemories: () =>
+    fetchJson<{ version: string; exportedAt: number; memories: unknown[] }>('/api/export'),
+
+  ageMemories: () =>
+    fetchJson<{ aged: number; skipped: number }>('/api/age', { method: 'POST' }),
 };

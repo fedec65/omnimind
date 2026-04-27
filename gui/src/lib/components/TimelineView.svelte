@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { appState, setError } from '../stores';
+  import { appState, setError } from '../stores.svelte.ts';
   import { api } from '../api';
   import MemoryCard from './MemoryCard.svelte';
 

@@ -33,6 +33,8 @@ import { MemoryStore } from '../core/MemoryStore.js';
 import { IntentPredictor, buildFingerprint } from '../prediction/IntentPredictor.js';
 import { MemoryBus } from '../bus/MemoryBus.js';
 import { ClaudeAdapter } from '../bus/adapters/ClaudeAdapter.js';
+import { CursorAdapter } from '../bus/adapters/CursorAdapter.js';
+import { ChatGPTAdapter } from '../bus/adapters/ChatGPTAdapter.js';
 import { EventType } from '../bus/types.js';
 import { join } from 'path';
 import { homedir } from 'os';
@@ -44,6 +46,7 @@ const SearchInput = z.object({
   limit: z.number().min(1).max(50).optional().describe('Maximum results (default: 10)'),
   wing: z.string().optional().describe('Filter by wing/category'),
   room: z.string().optional().describe('Filter by room/subcategory'),
+  namespace: z.string().optional().describe('Filter by agent namespace (default: default)'),
   layer: z.number().min(0).max(3).optional().describe('Filter by memory layer (0-3)'),
 });
 
@@ -52,7 +55,18 @@ const StoreInput = z.object({
   wing: z.string().min(1).max(100).describe('Wing/category (e.g., "project-alpha")'),
   room: z.string().max(100).optional().describe('Room/subcategory (e.g., "architecture")'),
   sourceTool: z.string().max(50).optional().describe('Tool that created this memory'),
+  namespace: z.string().optional().describe('Agent namespace (default: default)'),
   pin: z.boolean().optional().describe('Pin this memory to prevent aging'),
+});
+
+const StoreConversationInput = z.object({
+  turns: z.array(z.string().min(1)).min(1).describe('Array of conversation turns (e.g., ["user: Hello", "assistant: Hi there"])'),
+  wing: z.string().min(1).max(100).describe('Wing/category'),
+  room: z.string().max(100).optional().describe('Room/subcategory'),
+  sourceTool: z.string().max(50).optional().describe('Tool that created this memory'),
+  namespace: z.string().optional().describe('Agent namespace (default: default)'),
+  sourceId: z.string().optional().describe('Shared session ID for all turns'),
+  pin: z.boolean().optional().describe('Pin these memories to prevent aging'),
 });
 
 const PredictInput = z.object({
@@ -60,11 +74,13 @@ const PredictInput = z.object({
   gitBranch: z.string().optional().describe('Current git branch'),
   currentFile: z.string().optional().describe('Currently open file'),
   recentTools: z.array(z.string()).optional().describe('Recently used tools'),
+  namespace: z.string().optional().describe('Agent namespace for predictions (default: default)'),
 });
 
 const SubscribeInput = z.object({
   wings: z.array(z.string()).optional().describe('Wings to subscribe to'),
   rooms: z.array(z.string()).optional().describe('Rooms to subscribe to'),
+  namespaces: z.array(z.string()).optional().describe('Namespaces to subscribe to (default: same as client)'),
   eventTypes: z.array(z.enum(['create', 'update', 'delete'])).optional().describe('Event types to subscribe to'),
 });
 
@@ -91,7 +107,7 @@ export class OmnimindMcpServer {
     this.server = new Server(
       {
         name: 'omnimind',
-        version: '0.2.0',
+        version: '0.4.2',
       },
       {
         capabilities: {
@@ -113,11 +129,23 @@ export class OmnimindMcpServer {
       throw new Error(`Failed to initialize memory store: ${result.error.message}`);
     }
 
-    // Initialize bus with Claude adapter
-    const claudeAdapter = new ClaudeAdapter(this.bus);
-    const busResult = await this.bus.registerAdapter(claudeAdapter);
-    if (!busResult.ok) {
-      console.error(`[Omnimind MCP] Claude adapter failed: ${busResult.error.message}`);
+    // Initialize bus with all adapters
+    const claudeAdapter = new ClaudeAdapter(this.bus, { processExistingOnConnect: true });
+    const claudeResult = await this.bus.registerAdapter(claudeAdapter);
+    if (!claudeResult.ok) {
+      console.error(`[Omnimind MCP] Claude adapter failed: ${claudeResult.error.message}`);
+    }
+
+    const cursorAdapter = new CursorAdapter(this.bus);
+    const cursorResult = await this.bus.registerAdapter(cursorAdapter);
+    if (!cursorResult.ok) {
+      console.error(`[Omnimind MCP] Cursor adapter failed: ${cursorResult.error.message}`);
+    }
+
+    const chatgptAdapter = new ChatGPTAdapter(this.bus);
+    const chatgptResult = await this.bus.registerAdapter(chatgptAdapter);
+    if (!chatgptResult.ok) {
+      console.error(`[Omnimind MCP] ChatGPT adapter failed: ${chatgptResult.error.message}`);
     }
 
     this.initialized = true;
@@ -147,6 +175,11 @@ export class OmnimindMcpServer {
           name: 'omnimind_store',
           description: 'Store new information in your memory. Use this to save important decisions, user preferences, or context that should persist across sessions.',
           inputSchema: convertZodToJsonSchema(StoreInput),
+        },
+        {
+          name: 'omnimind_store_conversation',
+          description: 'Store a conversation as individual turns for fine-grained retrieval. Each turn gets its own embedding so a single relevant turn can surface the entire session.',
+          inputSchema: convertZodToJsonSchema(StoreConversationInput),
         },
         {
           name: 'omnimind_predict',
@@ -179,6 +212,8 @@ export class OmnimindMcpServer {
             return await this.handleSearch(request.params.arguments);
           case 'omnimind_store':
             return await this.handleStore(request.params.arguments);
+          case 'omnimind_store_conversation':
+            return await this.handleStoreConversation(request.params.arguments);
           case 'omnimind_predict':
             return await this.handlePredict(request.params.arguments);
           case 'omnimind_status':
@@ -214,6 +249,7 @@ export class OmnimindMcpServer {
       limit: input.limit,
       ...(input.wing !== undefined ? { wing: input.wing } : {}),
       ...(input.room !== undefined ? { room: input.room } : {}),
+      ...(input.namespace !== undefined ? { namespace: input.namespace } : {}),
       ...(input.layer !== undefined ? { layer: input.layer as import('../core/types.js').MemoryLayerId } : {}),
     };
     const result = await this.store.search(input.query, searchOpts);
@@ -250,6 +286,7 @@ export class OmnimindMcpServer {
     const storeMeta: import('../core/types.js').MemoryMeta = { wing: input.wing };
     if (input.room !== undefined) storeMeta.room = input.room;
     if (input.sourceTool !== undefined) storeMeta.sourceTool = input.sourceTool;
+    if (input.namespace !== undefined) storeMeta.namespace = input.namespace;
     if (input.pin !== undefined) storeMeta.pinned = input.pin;
     const result = await this.store.store(input.content, storeMeta);
 
@@ -263,6 +300,33 @@ export class OmnimindMcpServer {
         {
           type: 'text',
           text: `Stored memory ${memory.id.substring(0, 8)} in ${memory.wing}/${memory.room}.`,
+        },
+      ],
+    };
+  }
+
+  private async handleStoreConversation(args: unknown) {
+    const input = StoreConversationInput.parse(args);
+
+    const storeMeta: import('../core/types.js').MemoryMeta = { wing: input.wing };
+    if (input.room !== undefined) storeMeta.room = input.room;
+    if (input.sourceTool !== undefined) storeMeta.sourceTool = input.sourceTool;
+    if (input.namespace !== undefined) storeMeta.namespace = input.namespace;
+    if (input.sourceId !== undefined) storeMeta.sourceId = input.sourceId;
+    if (input.pin !== undefined) storeMeta.pinned = input.pin;
+
+    const result = await this.store.storeTurns(input.turns, storeMeta);
+
+    if (!result.ok) {
+      throw result.error;
+    }
+
+    const memories = result.value;
+    return {
+      content: [
+        {
+          type: 'text',
+          text: `Stored ${memories.length} conversation turns in ${memories[0]!.wing}/${memories[0]!.room} with shared sourceId ${memories[0]!.sourceId}.`,
         },
       ],
     };
@@ -503,6 +567,7 @@ export class OmnimindMcpServer {
 
     const filter: import('../bus/types.js').BusSubscription['filter'] = {};
     if (input.wings !== undefined) (filter as Record<string, unknown>).wings = input.wings;
+    if (input.namespaces !== undefined) (filter as Record<string, unknown>).namespaces = input.namespaces;
     (filter as Record<string, unknown>).eventTypes = eventTypes as import('../bus/types.js').EventType[];
     this.bus.subscribe(toolId, filter);
 

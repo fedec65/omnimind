@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { appState } from '../stores';
+  import { appState } from '../stores.svelte.ts';
   import { api } from '../api';
 
   $effect(() => {

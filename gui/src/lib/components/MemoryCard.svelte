@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { setError } from '../stores';
+  import { setError } from '../stores.svelte.ts';
   import { api } from '../api';
   import type { SearchResult } from '../api';
 

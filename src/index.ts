@@ -45,6 +45,8 @@ import { ActivityTracker } from './prediction/ActivityTracker.js';
 import { ContextInjector } from './prediction/ContextInjector.js';
 import { MemoryBus } from './bus/MemoryBus.js';
 import { ClaudeAdapter } from './bus/adapters/ClaudeAdapter.js';
+import { CursorAdapter } from './bus/adapters/CursorAdapter.js';
+import { ChatGPTAdapter } from './bus/adapters/ChatGPTAdapter.js';
 import { type MemoryEvent, type ConflictResolution, type SubscribeInput, type SyncInput } from './bus/types.js';
 
 import {
@@ -56,10 +58,14 @@ import {
   type PredictedMemory,
   type StoreStats,
   type Result,
+  type Entity,
+  type Relation,
+  type EntityType,
   MemoryLayer,
   ok,
   err,
 } from './core/types.js';
+import { extractRelations } from './core/RelationExtractor.js';
 import { type Prediction } from './prediction/IntentPredictor.js';
 
 // ─── Configuration ────────────────────────────────────────────────
@@ -132,10 +138,23 @@ export class Omnimind {
 
     // Initialize cross-tool memory bus
     const bus = new MemoryBus(store);
-    const claudeAdapter = new ClaudeAdapter(bus);
-    const adapterResult = await bus.registerAdapter(claudeAdapter);
-    if (!adapterResult.ok) {
-      console.error(`[Omnimind] Claude adapter failed: ${adapterResult.error.message}`);
+
+    const claudeAdapter = new ClaudeAdapter(bus, { processExistingOnConnect: true });
+    const claudeResult = await bus.registerAdapter(claudeAdapter);
+    if (!claudeResult.ok) {
+      console.error(`[Omnimind] Claude adapter failed: ${claudeResult.error.message}`);
+    }
+
+    const cursorAdapter = new CursorAdapter(bus);
+    const cursorResult = await bus.registerAdapter(cursorAdapter);
+    if (!cursorResult.ok) {
+      console.error(`[Omnimind] Cursor adapter failed: ${cursorResult.error.message}`);
+    }
+
+    const chatgptAdapter = new ChatGPTAdapter(bus);
+    const chatgptResult = await bus.registerAdapter(chatgptAdapter);
+    if (!chatgptResult.ok) {
+      console.error(`[Omnimind] ChatGPT adapter failed: ${chatgptResult.error.message}`);
     }
 
     // Initialize activity tracking and context injection
@@ -163,6 +182,23 @@ export class Omnimind {
     if (result.ok) {
       // Update predictor with this access
       // (In real implementation, we'd track the context that led to storage)
+    }
+    return result;
+  }
+
+  /**
+   * Store a conversation as individual turns.
+   *
+   * Each turn gets its own embedding and row, but shares the same
+   * `sourceId` for session-level grouping. This enables fine-grained
+   * retrieval — a single relevant turn can surface the entire session.
+   *
+   * Uses batch embedding and a single SQLite transaction for speed.
+   */
+  async storeConversation(turns: string[], meta: MemoryMeta): Promise<Result<Memory[]>> {
+    const result = await this.memoryStore.storeTurns(turns, meta);
+    if (result.ok) {
+      // Update predictor with this access
     }
     return result;
   }
@@ -256,8 +292,10 @@ export class Omnimind {
 
   /**
    * Check if a memory should be aged and perform the transition.
-   * 
+   *
    * This is called lazily — typically when a memory is accessed.
+   * When transitioning to L2 (Concept), extracts entities and relations
+   * and persists them to the knowledge graph.
    */
   async checkAging(memoryId: string): Promise<Result<Memory>> {
     const getResult = await this.memoryStore.get(memoryId);
@@ -278,11 +316,90 @@ export class Omnimind {
     const transition = await this.aging.transition(memory, targetLayer);
     if (!transition.ok) return err(transition.error);
 
-    // In a real implementation, we'd update the store with the aged version
-    // while keeping the original as a reference
+    const aged = transition.value;
+
+    // Persist the aged memory back to the store
+    const updateResult = await this.memoryStore.update(memoryId, {
+      content: aged.content,
+      layer: aged.layer,
+      conceptRefs: aged.conceptRefs,
+      compressedRef: aged.compressedRef,
+    });
+    if (!updateResult.ok) {
+      console.error(`[Omnimind] Failed to update aged memory ${memoryId}:`, updateResult.error.message);
+    }
+
+    // If transitioning to L2 (Concept), persist entities and relations to the graph
+    if (targetLayer === MemoryLayer.Concept && aged.conceptRefs.length > 0) {
+      // Re-extract entities from the original content (the pipeline already did this)
+      // We need the full entity objects, not just IDs. The pipeline stores them
+      // as conceptRefs but doesn't return them. We'll reconstruct from the aged
+      // content which has the form [Concept: Name(type), Name(type)...]
+      const entityPattern = /(\w+)\((\w+)\)/g;
+      const entities: Entity[] = [];
+      let match: RegExpExecArray | null;
+      while ((match = entityPattern.exec(aged.content)) !== null) {
+        const name = match[1]!;
+        const type = match[2]!;
+        const id = `entity_${name.toLowerCase()}`;
+        entities.push({ id, name, type: type as EntityType, description: null, firstSeen: Date.now(), lastSeen: Date.now(), mentionCount: 1 });
+      }
+
+      // Upsert entities into the graph
+      for (const entity of entities) {
+        const upsert = this.memoryStore.upsertEntity(entity);
+        if (!upsert.ok) {
+          console.warn(`[Omnimind] Failed to upsert entity ${entity.id}:`, upsert.error.message);
+        }
+      }
+
+      // Extract and persist relations
+      const relations = extractRelations(memory.content, entities, memoryId);
+      for (const relation of relations) {
+        const insert = this.memoryStore.insertRelation(relation);
+        if (!insert.ok) {
+          console.warn(`[Omnimind] Failed to insert relation:`, insert.error.message);
+        }
+      }
+    }
+
     console.log(`[Omnimind] Aged memory ${memoryId.substring(0, 8)}: L${memory.layer} → L${targetLayer}`);
 
-    return ok(transition.value);
+    return ok(aged);
+  }
+
+  /**
+   * Bulk-age all eligible memories.
+   *
+   * Iterates every memory in the store and calls checkAging() on each
+   * one that passes shouldAge(). Returns a summary of how many were
+   * aged and how many were skipped.
+   */
+  async bulkAge(): Promise<Result<{ aged: number; skipped: number }>> {
+    const idsResult = this.memoryStore.getAllMemoryIds();
+    if (!idsResult.ok) return err(idsResult.error);
+
+    let aged = 0;
+    let skipped = 0;
+    for (const id of idsResult.value) {
+      const getResult = await this.memoryStore.get(id);
+      if (!getResult.ok || !getResult.value) {
+        skipped++;
+        continue;
+      }
+      if (!this.aging.shouldAge(getResult.value)) {
+        skipped++;
+        continue;
+      }
+
+      const ageResult = await this.checkAging(id);
+      if (ageResult.ok && ageResult.value.layer !== getResult.value.layer) {
+        aged++;
+      } else {
+        skipped++;
+      }
+    }
+    return ok({ aged, skipped });
   }
 
   // ─── Stats ──────────────────────────────────────────────────────
@@ -290,6 +407,82 @@ export class Omnimind {
   /** Get system statistics */
   async stats(): Promise<Result<StoreStats>> {
     return this.memoryStore.getStats();
+  }
+
+  // ─── Import / Export ──────────────────────────────────────────────
+
+  /**
+   * Export all memories as JSON.
+   *
+   * Includes embeddings, metadata, and graph references.
+   * Suitable for backup or migration.
+   */
+  exportToJson(): Result<string> {
+    const result = this.memoryStore.exportMemories();
+    if (!result.ok) return err(result.error);
+
+    const payload = {
+      version: 'omnimind-v1',
+      exportedAt: Date.now(),
+      memories: result.value,
+    };
+
+    return ok(JSON.stringify(payload, null, 2));
+  }
+
+  /**
+   * Import memories from JSON.
+   *
+   * Skips duplicates by content hash. Re-indexes vectors automatically.
+   * Returns the number of memories imported.
+   */
+  async importFromJson(json: string): Promise<Result<number>> {
+    try {
+      const payload = JSON.parse(json);
+      if (!payload.memories || !Array.isArray(payload.memories)) {
+        return err(new Error('Invalid export format: missing memories array'));
+      }
+      return this.memoryStore.importMemories(payload.memories);
+    } catch (error) {
+      return err(error instanceof Error ? error : new Error(String(error)));
+    }
+  }
+
+  /**
+   * Export memories as human-readable Markdown.
+   *
+   * Embeddings are excluded. Each memory becomes a section.
+   */
+  exportToMarkdown(): Result<string> {
+    const result = this.memoryStore.exportMemories();
+    if (!result.ok) return err(result.error);
+
+    const layerNames = ['Verbatim', 'Compressed', 'Concept', 'Wisdom'];
+    const lines: string[] = [
+      '# Omnimind Memory Export',
+      '',
+      `> Exported: ${new Date().toISOString()}`,
+      `> Total memories: ${result.value.length}`,
+      '',
+    ];
+
+    for (const mem of result.value) {
+      const layer = layerNames[mem.layer] ?? 'Unknown';
+      lines.push(`## [${mem.wing}] ${mem.room} — ${layer}`);
+      lines.push('');
+      lines.push(mem.content);
+      lines.push('');
+      if (mem.conceptRefs.length > 0) {
+        lines.push(`_Entities: ${mem.conceptRefs.join(', ')}_`);
+        lines.push('');
+      }
+      lines.push(`_Created: ${new Date(mem.createdAt).toISOString()} | Accessed ${mem.accessCount} times_`);
+      lines.push('');
+      lines.push('---');
+      lines.push('');
+    }
+
+    return ok(lines.join('\n'));
   }
 
   // ─── Bus Operations ─────────────────────────────────────────────
@@ -334,6 +527,48 @@ export class Omnimind {
   /** Get activity tracker stats for debugging */
   getActivityStats(): { isRunning: boolean; recentFiles: number; recentTools: number } {
     return this.activityTracker.getStats();
+  }
+
+  // ─── Graph Operations ─────────────────────────────────────────────
+
+  /** Query entities in the knowledge graph */
+  getEntities(opts?: { type?: EntityType | undefined; search?: string | undefined; limit?: number | undefined }): Result<Entity[]> {
+    return this.memoryStore.queryEntities(opts);
+  }
+
+  /** Query relations in the knowledge graph */
+  getRelations(opts?: { subjectId?: string | undefined; objectId?: string | undefined; predicate?: string | undefined; limit?: number | undefined }): Result<Relation[]> {
+    return this.memoryStore.queryRelations(opts);
+  }
+
+  /** Get subgraph around an entity */
+  getSubgraph(entityId: string, depth?: number): Result<{ entities: Entity[]; relations: Relation[] }> {
+    const neighborResult = this.memoryStore.getEntityNeighbors(entityId, depth);
+    if (!neighborResult.ok) return err(neighborResult.error);
+    const entities: Entity[] = [];
+    const relations: Relation[] = [];
+    for (const n of neighborResult.value) {
+      entities.push(n.entity);
+      relations.push(n.relation);
+    }
+    return ok({ entities, relations });
+  }
+
+  // ─── Settings ─────────────────────────────────────────────────────
+
+  /** Get all settings */
+  getSettings(): Result<Record<string, string>> {
+    return this.memoryStore.getAllSettings();
+  }
+
+  /** Get a single setting */
+  getSetting(key: string): Result<string | null> {
+    return this.memoryStore.getSetting(key);
+  }
+
+  /** Set a setting value */
+  setSetting(key: string, value: string): Result<void> {
+    return this.memoryStore.setSetting(key, value);
   }
 
   /** Close all resources */

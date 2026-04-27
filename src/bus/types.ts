@@ -38,6 +38,7 @@ export interface MemoryEvent {
     readonly content?: string;
     readonly wing?: string;
     readonly room?: string;
+    readonly namespace?: string;
     readonly metadata?: Record<string, unknown>;
     readonly validFrom?: number;
     readonly validTo?: number;
@@ -51,6 +52,7 @@ export interface BusSubscription {
   readonly toolId: string;
   readonly filter?: {
     readonly wings?: string[];
+    readonly namespaces?: string[];
     readonly eventTypes?: EventType[];
     readonly minPriority?: EventPriority;
   };

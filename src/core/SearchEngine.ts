@@ -112,6 +112,48 @@ export class SearchEngine {
     }
   }
 
+  /**
+   * Graph search — find memories connected to entities matching the query.
+   *
+   * Searches entity names, then finds memories that reference those entities
+   * via their `concept_refs` JSON array.
+   */
+  async graphSearch(query: string, limit: number): Promise<SearchResult[]> {
+    try {
+      // Find entities whose name matches the query
+      const entityRows = this.db.prepare(
+        `SELECT id FROM entities WHERE name LIKE ? LIMIT ?`
+      ).all(`%${query}%`, limit * 3) as Array<{ id: string }>;
+
+      if (entityRows.length === 0) return [];
+
+      // Find memories that reference any of these entities in concept_refs
+      const memoryIds = new Set<string>();
+      const results: SearchResult[] = [];
+
+      for (const entity of entityRows) {
+        const rows = this.db.prepare(
+          `SELECT * FROM memories WHERE concept_refs LIKE ? LIMIT ?`
+        ).all(`%"${entity.id}"%`, limit) as RawMemoryRow[];
+
+        for (const row of rows) {
+          if (memoryIds.has(row.id)) continue;
+          memoryIds.add(row.id);
+
+          results.push({
+            memory: this.rowToMemory(row),
+            score: 1.0, // Graph matches are binary
+            matchType: 'graph' as const,
+          });
+        }
+      }
+
+      return results.slice(0, limit);
+    } catch {
+      return [];
+    }
+  }
+
   /** Insert a vector into the VSS index */
   async indexVector(memoryId: string, embedding: Float32Array): Promise<void> {
     if (!this.vssAvailable) return;
@@ -124,6 +166,41 @@ export class SearchEngine {
       ).run(memoryId, buffer);
     } catch {
       // VSS insert failed — non-critical
+    }
+  }
+
+  /** Batch insert vectors into the VSS index (much faster than individual calls) */
+  async indexVectorsBatch(items: { memoryId: string; embedding: Float32Array }[]): Promise<void> {
+    if (!this.vssAvailable || items.length === 0) return;
+
+    try {
+      // Get all rowids in one query
+      const placeholders = items.map(() => '?').join(',');
+      const idToRowid = new Map<string, number>();
+      const rowidRows = this.db.prepare(
+        `SELECT id, rowid FROM memories WHERE id IN (${placeholders})`
+      ).all(...items.map(i => i.memoryId)) as Array<{ id: string; rowid: number }>;
+
+      for (const row of rowidRows) {
+        idToRowid.set(row.id, row.rowid);
+      }
+
+      // Insert all vectors in a single transaction
+      const insert = this.db.prepare(
+        'INSERT INTO vss_memories(rowid, embedding) VALUES (?, ?)'
+      );
+
+      const tx = this.db.transaction(() => {
+        for (const item of items) {
+          const rowid = idToRowid.get(item.memoryId);
+          if (rowid === undefined) continue;
+          insert.run(rowid, Buffer.from(item.embedding.buffer));
+        }
+      });
+
+      tx();
+    } catch {
+      // VSS batch insert failed — non-critical
     }
   }
 
@@ -141,9 +218,8 @@ export class SearchEngine {
         FROM memories m
         JOIN vss_memories vss ON m.rowid = vss.rowid
         ${whereClause}
-        WHERE vss_search(embedding, ?)
+        WHERE vss_search(embedding, vss_search_params(?, ?))
         ORDER BY vss.distance
-        LIMIT ?
       `;
 
       const buffer = Buffer.from(queryEmbedding.buffer);
@@ -234,6 +310,7 @@ export class SearchEngine {
       wing: row.wing,
       room: row.room,
       sourceTool: row.source_tool,
+      namespace: row.namespace,
       sourceId: row.source_id,
       confidence: row.confidence,
       createdAt: row.created_at,
@@ -257,6 +334,7 @@ interface RawMemoryRow {
   wing: string;
   room: string;
   source_tool: string;
+  namespace: string;
   source_id: string | null;
   confidence: number;
   created_at: number;

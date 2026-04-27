@@ -21,6 +21,7 @@ function makeMemory(id: string, content: string, wing = 'test', room = 'default'
     wing,
     room,
     sourceTool: 'test',
+    namespace: 'default',
     sourceId: null,
     confidence: 1,
     createdAt: Date.now(),
@@ -140,15 +141,53 @@ describe('ContextInjector', () => {
       expect(result.avgConfidence).toBe(0.85);
     });
 
-    it('should truncate content to 200 chars', async () => {
-      const longContent = 'A'.repeat(500);
+    it('should smart-truncate preserving start and end', async () => {
+      const longContent = 'START-' + 'A'.repeat(400) + '-END';
       memories.set('mem-1', makeMemory('mem-1', longContent));
 
       const result = await injector.formatInjection([
         { memoryId: 'mem-1', confidence: 0.9, reason: 'test' },
       ]);
 
-      expect(result.text).not.toContain('A'.repeat(250));
+      expect(result.text).toContain('START-');
+      expect(result.text).toContain('-END');
+      expect(result.text).toContain('...');
+    });
+
+    it('should use compressed ref (L1) when available', async () => {
+      const mem = makeMemory('mem-1', 'A'.repeat(500));
+      mem.compressedRef = 'User prefers GraphQL > REST';
+      mem.layer = MemoryLayer.Compressed;
+      memories.set('mem-1', mem);
+
+      const result = await injector.formatInjection([
+        { memoryId: 'mem-1', confidence: 0.9, reason: 'test' },
+      ]);
+
+      expect(result.text).toContain('User prefers GraphQL > REST');
+      expect(result.text).not.toContain('A'.repeat(50));
+    });
+
+    it('should evict predictions to respect token budget', async () => {
+      const budgetInjector = new ContextInjector(
+        predictor,
+        async (id) => memories.get(id) ?? null,
+        { tokenBudget: 30, minConfidence: 0.1 },
+      );
+
+      memories.set('mem-1', makeMemory('mem-1', 'First memory content here'));
+      memories.set('mem-2', makeMemory('mem-2', 'Second memory content here'));
+      memories.set('mem-3', makeMemory('mem-3', 'Third memory content here'));
+
+      const result = await budgetInjector.formatInjection([
+        { memoryId: 'mem-1', confidence: 0.9, reason: 'test' },
+        { memoryId: 'mem-2', confidence: 0.5, reason: 'test' },
+        { memoryId: 'mem-3', confidence: 0.3, reason: 'test' },
+      ]);
+
+      expect(result.tokenEstimate).toBeLessThanOrEqual(30);
+      // Highest confidence should be kept
+      expect(result.text).toContain('First memory');
     });
   });
 

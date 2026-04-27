@@ -239,15 +239,17 @@ export class AgingPipeline {
     const entities: Array<{ id: string; name: string; type: string }> = [];
     const seen = new Set<string>();
 
-    // Pattern: Capitalized words (likely proper nouns)
-    const properNounPattern = /\b[A-Z][a-z]+(?:[A-Z][a-z]+)*\b/g;
+    // Pattern: Capitalized words (likely proper nouns), including acronyms like GraphQL
+    const properNounPattern = /\b[A-Z][a-z]+(?:[A-Z][a-z]+)*(?:[A-Z]{2,})?\b|\b[A-Z]{2,}\b/g;
+    const stopWords = new Set(['the', 'a', 'an', 'this', 'that', 'these', 'those', 'it', 'its']);
     let match: RegExpExecArray | null;
     while ((match = properNounPattern.exec(text)) !== null) {
       const name = match[0];
-      if (!seen.has(name.toLowerCase()) && name.length > 2) {
-        seen.add(name.toLowerCase());
+      const lower = name.toLowerCase();
+      if (!seen.has(lower) && name.length > 2 && !stopWords.has(lower)) {
+        seen.add(lower);
         entities.push({
-          id: `entity_${name.toLowerCase()}`,
+          id: `entity_${lower}`,
           name,
           type: this.inferEntityType(name, text),
         });

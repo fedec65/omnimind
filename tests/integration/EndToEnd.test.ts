@@ -106,4 +106,36 @@ describe('End-to-End', () => {
     if (!stats.ok) return;
     expect(stats.value.totalMemories).toBe(2);
   });
+
+  it('should store conversation turns and find them via search', async () => {
+    const turns = [
+      'user: What database should we use?',
+      'assistant: PostgreSQL is a solid choice for relational data.',
+      'user: Should we add Redis for caching?',
+      'assistant: Yes, Redis works well alongside PostgreSQL.',
+    ];
+
+    const result = await omni.storeConversation(turns, {
+      wing: 'project-alpha',
+      room: 'architecture',
+      sourceId: 'session-db-123',
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    expect(result.value.length).toBe(4);
+    expect(result.value[0]!.sourceId).toBe('session-db-123');
+    expect(result.value[1]!.sourceId).toBe('session-db-123');
+
+    const search = await omni.search('Redis caching');
+    expect(search.ok).toBe(true);
+    if (!search.ok) return;
+
+    expect(search.value.length).toBeGreaterThan(0);
+    const fromSession = search.value.some(
+      r => r.memory.sourceId === 'session-db-123',
+    );
+    expect(fromSession).toBe(true);
+  });
 });

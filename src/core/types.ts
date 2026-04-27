@@ -23,6 +23,7 @@ export interface Memory {
   readonly wing: string;
   readonly room: string;
   readonly sourceTool: string;
+  readonly namespace: string;
   readonly sourceId: string | null;
   readonly confidence: number;
   readonly createdAt: number;
@@ -40,6 +41,7 @@ export interface MemoryMeta {
   wing: string;
   room?: string | undefined;
   sourceTool?: string | undefined;
+  namespace?: string | undefined;
   sourceId?: string | undefined;
   confidence?: number | undefined;
   validFrom?: number | undefined;
@@ -60,10 +62,12 @@ export interface SearchOptions {
   readonly layer?: MemoryLayerId | MemoryLayerId[] | undefined;
   readonly wing?: string | undefined;
   readonly room?: string | undefined;
+  readonly namespace?: string | undefined;
   readonly timeRange?: readonly [number, number] | undefined;
   readonly includeExpired?: boolean | undefined;
   readonly boostRecent?: boolean | undefined;
   readonly temporalHalfLife?: number | undefined; // ms, default 7 days
+  readonly vectorOnly?: boolean | undefined; // Skip keyword search, use pure vector
 }
 
 /** Entity in the knowledge graph */

@@ -110,4 +110,120 @@ Some random text that is not a decision.
     // Should not throw even without CLAUDE.md
     await expect(adapter.onMemoryEvent(event)).resolves.not.toThrow();
   });
+
+  it('should auto-save conversation turns to memory store', async () => {
+    const watchDir = join(tmpDir, 'claude-projects', 'my-project');
+    mkdirSync(watchDir, { recursive: true });
+
+    await adapter.onConnect();
+
+    // Write a multi-turn conversation
+    const conversation = [
+      { role: 'user', content: 'How do I implement auth in Node.js?' },
+      { role: 'assistant', content: 'You can use Passport.js with JWT tokens.' },
+      { role: 'user', content: 'Can you show me an example?' },
+    ];
+    writeFileSync(join(watchDir, 'chat.jsonl'), conversation.map((t) => JSON.stringify(t)).join('\n'));
+
+    // Wait for debounce + processing
+    await new Promise((r) => setTimeout(r, 3000));
+
+    // Verify turns were stored
+    const searchResult = await store.search('Passport.js', { limit: 10, wing: 'my-project' });
+    expect(searchResult.ok).toBe(true);
+    expect(searchResult.value.length).toBeGreaterThan(0);
+    expect(searchResult.value.some((r) => r.memory.content.includes('Passport.js'))).toBe(true);
+  });
+
+  it('should deduplicate unchanged conversation files', async () => {
+    const watchDir = join(tmpDir, 'claude-projects', 'dedup-test');
+    mkdirSync(watchDir, { recursive: true });
+
+    await adapter.onConnect();
+
+    const filePath = join(watchDir, 'repeat.jsonl');
+    const conversation = [{ role: 'user', content: 'Hello again' }];
+    writeFileSync(filePath, JSON.stringify(conversation[0]));
+
+    // First processing
+    await new Promise((r) => setTimeout(r, 3000));
+
+    // Trigger another debounce with same content
+    writeFileSync(filePath, JSON.stringify(conversation[0]));
+    await new Promise((r) => setTimeout(r, 3000));
+
+    // Should be skipped the second time (same hash)
+    const allMemories = await store.search('', { limit: 100, wing: 'dedup-test' });
+    expect(allMemories.ok).toBe(true);
+    // Only one turn stored, not duplicated
+    expect(allMemories.value.length).toBe(1);
+  });
+
+  it('should parse alternative role formats', async () => {
+    const watchDir = join(tmpDir, 'claude-projects', 'alt-format');
+    mkdirSync(watchDir, { recursive: true });
+
+    await adapter.onConnect();
+
+    // Some Claude exports use 'type' instead of 'role'
+    const conversation = [
+      { type: 'user_message', content: 'What is the capital of France?' },
+      { type: 'assistant_message', content: 'The capital of France is Paris.' },
+      { type: 'tool_use', content: 'Searching...' }, // should be skipped
+    ];
+    writeFileSync(join(watchDir, 'typed.jsonl'), conversation.map((t) => JSON.stringify(t)).join('\n'));
+
+    await new Promise((r) => setTimeout(r, 3000));
+
+    const result = await store.search('Paris', { limit: 10, wing: 'alt-format' });
+    expect(result.ok).toBe(true);
+    expect(result.value.length).toBeGreaterThan(0);
+    // Should have stored the user + assistant turns, not the tool_use
+    expect(result.value.some((r) => r.memory.content.includes('Paris'))).toBe(true);
+  });
+
+  it('should parse Claude Code native format with message wrapper', async () => {
+    const watchDir = join(tmpDir, 'claude-projects', 'native-format');
+    mkdirSync(watchDir, { recursive: true });
+
+    await adapter.onConnect();
+
+    // Claude Code native .jsonl format: { type, message: { role, content } }
+    const conversation = [
+      {
+        type: 'user',
+        message: { role: 'user', content: 'How do I use React hooks?' },
+      },
+      {
+        type: 'assistant',
+        message: { role: 'assistant', content: 'React hooks let you use state and other React features in functional components.' },
+      },
+      {
+        type: 'progress',
+        message: { role: 'assistant', content: 'Thinking...' }, // should be skipped
+      },
+      {
+        type: 'user',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'Show me a useState example.' }],
+        },
+      },
+    ];
+    writeFileSync(join(watchDir, 'native.jsonl'), conversation.map((t) => JSON.stringify(t)).join('\n'));
+
+    await new Promise((r) => setTimeout(r, 3000));
+
+    const result = await store.search('React hooks', { limit: 10, wing: 'native-format' });
+    expect(result.ok).toBe(true);
+    expect(result.value.length).toBeGreaterThanOrEqual(2);
+    expect(result.value.some((r) => r.memory.content.includes('React hooks'))).toBe(true);
+    expect(result.value.some((r) => r.memory.content.includes('useState'))).toBe(true);
+
+    // Progress entries should NOT be stored
+    // Progress entries should NOT be stored (total should be 3, not 4)
+    const allResult = await store.search('', { limit: 10, wing: 'native-format' });
+    expect(allResult.ok).toBe(true);
+    expect(allResult.value.length).toBe(3);
+  });
 });

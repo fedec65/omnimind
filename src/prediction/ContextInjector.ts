@@ -9,7 +9,7 @@
  * Target: < 150 tokens total context addition.
  */
 
-import { type Memory, type ContextFingerprint, type Result, ok, err } from '../core/types.js';
+import { MemoryLayer, type Memory, type ContextFingerprint, type Result, ok, err } from '../core/types.js';
 import { type IntentPredictor, type Prediction } from './IntentPredictor.js';
 
 export interface InjectorConfig {
@@ -19,6 +19,8 @@ export interface InjectorConfig {
   maxPredictions?: number;
   /** Minimum confidence to include (default: 0.7) */
   minConfidence?: number;
+  /** Maximum characters per memory line before truncation (default: 200) */
+  maxCharsPerMemory?: number;
 }
 
 export interface InjectionResult {
@@ -26,6 +28,13 @@ export interface InjectionResult {
   readonly tokenEstimate: number;
   readonly predictionCount: number;
   readonly avgConfidence: number;
+}
+
+/** Single entry in the injection with its cost metadata */
+interface InjectionEntry {
+  line: string;
+  tokens: number;
+  confidence: number;
 }
 
 export class ContextInjector {
@@ -44,6 +53,7 @@ export class ContextInjector {
       tokenBudget: config.tokenBudget ?? 150,
       maxPredictions: config.maxPredictions ?? 3,
       minConfidence: config.minConfidence ?? 0.7,
+      maxCharsPerMemory: config.maxCharsPerMemory ?? 200,
     };
   }
 
@@ -84,46 +94,108 @@ export class ContextInjector {
   /**
    * Format predictions as compact XML for context injection.
    *
-   * Format:
-   * ```xml
-   * <omnimind_predictions confidence="0.85" count="2">
-   * [wing/room] Truncated memory content...
-   * [wing/room] Another memory...
-   * </omnimind_predictions>
-   * ```
+   * Compression strategy (3-level):
+   * 1. If memory has a compressed ref (L1), use the compressed text.
+   * 2. Smart truncation: preserve start and end, cut the middle.
+   * 3. If still over budget, evict the least-confident prediction.
    */
   async formatInjection(predictions: Prediction[]): Promise<InjectionResult> {
     if (predictions.length === 0) {
       return { text: '', tokenEstimate: 0, predictionCount: 0, avgConfidence: 0 };
     }
 
-    const lines: string[] = [];
-    let tokenEstimate = 0;
+    // Sort by confidence descending so we try to keep the best ones
+    const sorted = [...predictions].sort((a, b) => b.confidence - a.confidence);
 
-    for (const pred of predictions) {
-      if (tokenEstimate > this.config.tokenBudget) break;
+    // Fixed overhead: XML tags + newlines
+    const overhead = this.estimateTokens(`\n<omnimind_predictions confidence="0.00" count="${sorted.length}">\n\n</omnimind_predictions>\n`);
 
-      const memory = await this.memoryFetcher(pred.memoryId);
-      if (!memory) continue;
+    let entries: InjectionEntry[] = [];
+    let attempts = 0;
+    const maxAttempts = sorted.length;
 
-      const line = `[${memory.wing}/${memory.room}] ${memory.content.substring(0, 200)}`;
-      lines.push(line);
-      tokenEstimate += line.split(/\s+/).length;
+    while (attempts <= maxAttempts) {
+      const active = sorted.slice(0, sorted.length - attempts);
+      if (active.length === 0) break;
+
+      const budgetPerLine = Math.max(
+        30,
+        Math.floor((this.config.tokenBudget - overhead) / active.length),
+      );
+      const charsPerLine = Math.min(
+        this.config.maxCharsPerMemory,
+        budgetPerLine * 4, // rough chars-per-token estimate
+      );
+
+      entries = [];
+      let totalTokens = overhead;
+
+      for (const pred of active) {
+        const memory = await this.memoryFetcher(pred.memoryId);
+        if (!memory) continue;
+
+        const line = this.buildLine(memory, charsPerLine);
+        const tokens = this.estimateTokens(line);
+        entries.push({ line, tokens, confidence: pred.confidence });
+        totalTokens += tokens;
+      }
+
+      if (totalTokens <= this.config.tokenBudget) {
+        break; // Budget respected
+      }
+
+      // Over budget — evict the lowest-confidence entry and retry
+      attempts++;
     }
 
-    if (lines.length === 0) {
+    if (entries.length === 0) {
       return { text: '', tokenEstimate: 0, predictionCount: 0, avgConfidence: 0 };
     }
 
-    const avgConfidence = predictions.reduce((s, p) => s + p.confidence, 0) / predictions.length;
-    const text = `\n<omnimind_predictions confidence="${avgConfidence.toFixed(2)}" count="${lines.length}">\n${lines.join('\n')}\n</omnimind_predictions>\n`;
+    const avgConfidence = entries.reduce((s, e) => s + e.confidence, 0) / entries.length;
+    const tokenEstimate = overhead + entries.reduce((s, e) => s + e.tokens, 0);
+    const text = `\n<omnimind_predictions confidence="${avgConfidence.toFixed(2)}" count="${entries.length}">\n${entries.map((e) => e.line).join('\n')}\n</omnimind_predictions>\n`;
 
     return {
       text,
       tokenEstimate,
-      predictionCount: lines.length,
+      predictionCount: entries.length,
       avgConfidence,
     };
+  }
+
+  /**
+   * Build a single injection line for a memory, applying compression.
+   *
+   * Level 1: Use L1 compressed text if available.
+   * Level 2: Smart truncation preserving start + end.
+   */
+  private buildLine(memory: Memory, maxChars: number): string {
+    // Level 1: Use compressed reference (L1) if available
+    if (memory.compressedRef && memory.layer >= MemoryLayer.Compressed) {
+      const compressed = `[${memory.wing}/${memory.room}] ${memory.compressedRef}`;
+      if (compressed.length <= maxChars) return compressed;
+      // Even compressed might be too long — fall through to truncation
+    }
+
+    const prefix = `[${memory.wing}/${memory.room}] `;
+    const content = memory.content;
+    const available = maxChars - prefix.length;
+
+    if (content.length <= available) {
+      return `${prefix}${content}`;
+    }
+
+    // Level 2: Smart truncation — preserve start and end
+    const half = Math.floor(available / 2) - 3; // 3 chars for "..."
+    const start = content.slice(0, half);
+    const end = content.slice(-half);
+    return `${prefix}${start}...${end}`;
+  }
+
+  /** Rough token estimation (words + punctuation) */
+  private estimateTokens(text: string): number {
+    return text.split(/\s+/).length;
   }
 
   /**

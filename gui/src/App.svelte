@@ -1,10 +1,12 @@
 <script lang="ts">
-  import { appState, setError } from './lib/stores';
+  import { appState, setError } from './lib/stores.svelte.ts';
   import { api } from './lib/api';
   import SearchPanel from './lib/components/SearchPanel.svelte';
   import StatsPanel from './lib/components/StatsPanel.svelte';
   import TimelineView from './lib/components/TimelineView.svelte';
   import GraphView from './lib/components/GraphView.svelte';
+  import SpatialMap from './lib/components/SpatialMap.svelte';
+  import SettingsPanel from './lib/components/SettingsPanel.svelte';
 
   let serverReady = $state(false);
 
@@ -38,13 +40,14 @@
     <aside class="w-56 flex-shrink-0 border-r border-[var(--border)] flex flex-col">
       <div class="p-4 border-b border-[var(--border)]">
         <h1 class="text-lg font-bold text-[var(--text-h)]">Omnimind</h1>
-        <div class="text-xs text-[var(--text-muted)] mt-1">v0.3.0</div>
+        <div class="text-xs text-[var(--text-muted)] mt-1">v0.4.2</div>
       </div>
 
       <nav class="flex-1 p-2 space-y-1">
         {#each [
           { id: 'search', label: 'Search', icon: '🔍' },
           { id: 'timeline', label: 'Timeline', icon: '📅' },
+          { id: 'spatial', label: 'Spatial Map', icon: '🗺️' },
           { id: 'graph', label: 'Concept Graph', icon: '🕸️' },
           { id: 'settings', label: 'Settings', icon: '⚙️' },
         ] as tab}
@@ -78,13 +81,10 @@
           <TimelineView />
         {:else if appState.activeTab === 'graph'}
           <GraphView />
+        {:else if appState.activeTab === 'spatial'}
+          <SpatialMap />
         {:else if appState.activeTab === 'settings'}
-          <div class="max-w-xl mx-auto">
-            <h2 class="text-xl font-semibold mb-4">Settings</h2>
-            <div class="bg-[var(--surface)] rounded-xl p-6 border border-[var(--border)]">
-              <p class="text-[var(--text-muted)]">Settings will be available in a future update.</p>
-            </div>
-          </div>
+          <SettingsPanel />
         {/if}
       </div>
     </main>

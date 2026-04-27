@@ -265,8 +265,8 @@ export class IntentPredictor {
    * We intentionally drop some detail to enable fuzzy matching.
    */
   private buildSignature(fp: ContextFingerprint): string {
-    // Use only the most predictive features
-    const key = `${fp.projectHash}:${fp.fileExtension}:${fp.recentWings.join(',')}`;
+    // Use project, branch, file type, wings, and tools for a richer context signature
+    const key = `${fp.projectHash}:${fp.branchHash}:${fp.fileExtension}:${fp.recentWings.join(',')}:${fp.recentTools.join(',')}`;
     return createHash('sha256').update(key).digest('hex').substring(0, 16);
   }
 
