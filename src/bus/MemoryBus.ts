@@ -276,7 +276,7 @@ export class MemoryBus {
       if (!filter.wings.includes(event.payload.wing)) return false;
     }
 
-    if (filter.namespaces && event.payload.namespace) {
+    if (!filter.crossNamespace && filter.namespaces && event.payload.namespace) {
       if (!filter.namespaces.includes(event.payload.namespace)) return false;
     }
 

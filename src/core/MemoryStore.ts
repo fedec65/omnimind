@@ -1038,6 +1038,35 @@ export class MemoryStore {
     }
   }
 
+  /** Get all relations involving any of the given entity IDs */
+  getRelationsForEntities(entityIds: string[]): Result<Relation[]> {
+    if (!this.initialized) return err(new Error('Store not initialized'));
+    if (entityIds.length === 0) return ok([]);
+    try {
+      const placeholders = entityIds.map(() => '?').join(',');
+      const rows = this.db!.prepare(
+        `SELECT * FROM relations WHERE subject_id IN (${placeholders}) OR object_id IN (${placeholders})`,
+      ).all(...entityIds, ...entityIds) as Array<{
+        id: string; subject_id: string; predicate: string; object_id: string;
+        valid_from: number | null; valid_to: number | null;
+        source_memory: string | null; confidence: number;
+      }>;
+      const relations: Relation[] = rows.map((r) => ({
+        id: r.id,
+        subjectId: r.subject_id,
+        predicate: r.predicate,
+        objectId: r.object_id,
+        validFrom: r.valid_from,
+        validTo: r.valid_to,
+        sourceMemory: r.source_memory,
+        confidence: r.confidence,
+      }));
+      return ok(relations);
+    } catch (error) {
+      return err(error instanceof Error ? error : new Error(String(error)));
+    }
+  }
+
   // ─── Graph Writes ─────────────────────────────────────────────────
 
   /**
@@ -1274,8 +1303,11 @@ export class MemoryStore {
       params.push(opts.room);
     }
 
-    // Namespace filter
-    if (opts.namespace) {
+    // Namespace filter (single or multiple)
+    if (opts.namespaces && opts.namespaces.length > 0) {
+      conditions.push(`namespace IN (${opts.namespaces.map(() => '?').join(',')})`);
+      params.push(...opts.namespaces);
+    } else if (opts.namespace) {
       conditions.push('namespace = ?');
       params.push(opts.namespace);
     }

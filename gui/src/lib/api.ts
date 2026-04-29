@@ -85,16 +85,22 @@ async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
 export const api = {
   health: () => fetchJson<{ status: string; version: string }>('/api/health'),
 
-  search: (q: string, limit = 20) =>
-    fetchJson<{ results: SearchResult[] }>(`/api/search?q=${encodeURIComponent(q)}&limit=${limit}`),
+  search: (q: string, limit = 20, namespaces?: string[]) => {
+    const params = new URLSearchParams();
+    params.set('q', q);
+    params.set('limit', String(limit));
+    if (namespaces) params.set('namespaces', namespaces.join(','));
+    return fetchJson<{ results: SearchResult[] }>(`/api/search?${params.toString()}`);
+  },
 
-  memories: (q?: string, limit = 50, wing?: string, room?: string, namespace?: string) => {
+  memories: (q?: string, limit = 50, wing?: string, room?: string, namespace?: string, namespaces?: string[]) => {
     const params = new URLSearchParams();
     if (q) params.set('q', q);
     params.set('limit', String(limit));
     if (wing) params.set('wing', wing);
     if (room) params.set('room', room);
     if (namespace) params.set('namespace', namespace);
+    if (namespaces) params.set('namespaces', namespaces.join(','));
     return fetchJson<{ memories: SearchResult[] }>(`/api/memories?${params.toString()}`);
   },
 

@@ -120,7 +120,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
 
   // Health check
   if (path === '/api/health' && method === 'GET') {
-    sendJson(res, 200, { status: 'ok', version: '0.5.0' });
+    sendJson(res, 200, { status: 'ok', version: '0.6.0' });
     return;
   }
 
@@ -197,7 +197,10 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
   if (path === '/api/search' && method === 'GET') {
     const query = url.searchParams.get('q') ?? '';
     const limit = parseInt(url.searchParams.get('limit') ?? '10', 10);
-    const result = await omni!.search(query, { limit });
+    const namespace = url.searchParams.get('namespace') ?? undefined;
+    const namespacesParam = url.searchParams.get('namespaces');
+    const namespaces = namespacesParam ? namespacesParam.split(',') : undefined;
+    const result = await omni!.search(query, { limit, namespace, namespaces });
     if (!result.ok) {
       sendJson(res, 500, { error: result.error.message });
       return;

@@ -1,0 +1,25 @@
+# Source & tests
+src/
+tests/
+benchmarks/
+scripts/force-l2-aging.ts
+
+# Config files
+.gitignore
+.eslintrc*
+.prettierrc*
+tsconfig.json
+vitest.config.ts
+
+# Dev artifacts
+node_modules/
+*.db
+*.log
+.env
+.env.*
+
+# Tauri (desktop app)
+src-tauri/
+
+# Docs that are too large
+BENCHMARKS.md

@@ -313,10 +313,18 @@ export class Omnimind {
       return ok(memory);
     }
 
-    const transition = await this.aging.transition(memory, targetLayer);
-    if (!transition.ok) return err(transition.error);
+    let aged: Memory;
 
-    const aged = transition.value;
+    // L3 (Wisdom): distill from graph relations directly (needs DB access)
+    if (targetLayer === MemoryLayer.Wisdom) {
+      const distilled = await this.distillToL3(memory);
+      if (!distilled.ok) return err(distilled.error);
+      aged = distilled.value;
+    } else {
+      const transition = await this.aging.transition(memory, targetLayer);
+      if (!transition.ok) return err(transition.error);
+      aged = transition.value;
+    }
 
     // Persist the aged memory back to the store
     const updateResult = await this.memoryStore.update(memoryId, {
@@ -400,6 +408,65 @@ export class Omnimind {
       }
     }
     return ok({ aged, skipped });
+  }
+
+  // ─── L3 Wisdom ──────────────────────────────────────────────────
+
+  /**
+   * Distill L2 memory into L3 wisdom using graph relations.
+   *
+   * Queries all relations involving the memory's entities and extracts
+   * recurring patterns (predicates with frequency ≥ 2). Produces a
+   * compact wisdom statement.
+   */
+  private async distillToL3(memory: Memory): Promise<Result<Memory>> {
+    try {
+      const entityIds = memory.conceptRefs;
+      if (entityIds.length === 0) {
+        // Fallback: simple compression if no entities
+        return ok({
+          ...memory,
+          content: `[Wisdom: ${memory.content.substring(0, 150)}]`,
+          layer: MemoryLayer.Wisdom,
+        });
+      }
+
+      // Fetch relations for this memory's entities
+      const relsResult = this.memoryStore.getRelationsForEntities(entityIds);
+      if (!relsResult.ok) return err(relsResult.error);
+
+      const relations = relsResult.value;
+
+      // Count predicate frequencies
+      const predicateCounts = new Map<string, number>();
+      for (const r of relations) {
+        predicateCounts.set(r.predicate, (predicateCounts.get(r.predicate) ?? 0) + 1);
+      }
+
+      // Build wisdom from recurring patterns
+      const patterns: string[] = [];
+      for (const [predicate, count] of predicateCounts) {
+        if (count >= 2) {
+          // Find all pairs for this predicate
+          const pairs = relations
+            .filter((r) => r.predicate === predicate)
+            .map((r) => `${r.subjectId} → ${r.objectId}`);
+          patterns.push(`${predicate} (${count}x): ${pairs.slice(0, 3).join(', ')}`);
+        }
+      }
+
+      const wisdom = patterns.length > 0
+        ? `[Wisdom: ${patterns.join('; ')}]`
+        : `[Wisdom: ${memory.content.substring(0, 150)}]`;
+
+      return ok({
+        ...memory,
+        content: wisdom,
+        layer: MemoryLayer.Wisdom,
+      });
+    } catch (error) {
+      return err(error instanceof Error ? error : new Error(String(error)));
+    }
   }
 
   // ─── Stats ──────────────────────────────────────────────────────

@@ -63,6 +63,7 @@ export interface SearchOptions {
   readonly wing?: string | undefined;
   readonly room?: string | undefined;
   readonly namespace?: string | undefined;
+  readonly namespaces?: string[] | undefined;
   readonly timeRange?: readonly [number, number] | undefined;
   readonly includeExpired?: boolean | undefined;
   readonly boostRecent?: boolean | undefined;

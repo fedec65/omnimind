@@ -1,11 +1,13 @@
 {
   "name": "omnimind",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Proactive, cross-tool memory system for LLMs — 100% local, privacy-first",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "files": [
     "dist/",
+    "gui/dist/",
+    "scripts/",
     "README.md",
     "LICENSE"
   ],
@@ -25,7 +27,8 @@
     "lint:fix": "eslint src/ tests/ --fix",
     "format": "prettier --write \"src/**/*.ts\" \"tests/**/*.ts\"",
     "typecheck": "tsc --noEmit",
-    "prepare": "npm run build",
+    "postinstall": "node scripts/download-model.js",
+    "prepublishOnly": "npm run build && cd gui && npm run build",
     "start": "node dist/index.js",
     "mcp": "node dist/mcp-server.js",
     "server": "node dist/server.js",

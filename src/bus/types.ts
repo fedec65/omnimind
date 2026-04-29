@@ -53,6 +53,7 @@ export interface BusSubscription {
   readonly filter?: {
     readonly wings?: string[];
     readonly namespaces?: string[];
+    readonly crossNamespace?: boolean;
     readonly eventTypes?: EventType[];
     readonly minPriority?: EventPriority;
   };
