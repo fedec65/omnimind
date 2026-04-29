@@ -195,6 +195,39 @@ export const AgingThresholds = {
   [MemoryLayer.Wisdom]: Infinity,                  // Terminal layer
 } as const;
 
+/** Cross-project wisdom pattern */
+export interface WisdomPattern {
+  readonly id: string;
+  readonly pattern: string;
+  readonly predicate: string;
+  readonly subjectType: string;
+  readonly objectType: string;
+  readonly frequency: number;
+  readonly namespaces: string[];
+  readonly firstSeen: number;
+  readonly lastSeen: number;
+  readonly exampleMemoryIds: string[];
+}
+
+/** Archived memory entry */
+export interface ArchivedMemory {
+  readonly id: string;
+  readonly content: string;
+  readonly contentHash: string;
+  readonly embedding: Float32Array;
+  readonly layer: MemoryLayerId;
+  readonly wing: string;
+  readonly room: string;
+  readonly namespace: string;
+  readonly sourceTool: string;
+  readonly sourceId: string | null;
+  readonly confidence: number;
+  readonly createdAt: number;
+  readonly lastAccessedAt: number;
+  readonly accessCount: number;
+  readonly archivedAt: number;
+}
+
 /** Default search configuration */
 export const DefaultSearchConfig = {
   limit: 10,

@@ -7,6 +7,7 @@
   import GraphView from './lib/components/GraphView.svelte';
   import SpatialMap from './lib/components/SpatialMap.svelte';
   import SettingsPanel from './lib/components/SettingsPanel.svelte';
+  import ArchivePanel from './lib/components/ArchivePanel.svelte';
 
   let serverReady = $state(false);
 
@@ -40,7 +41,7 @@
     <aside class="w-56 flex-shrink-0 border-r border-[var(--border)] flex flex-col">
       <div class="p-4 border-b border-[var(--border)]">
         <h1 class="text-lg font-bold text-[var(--text-h)]">Omnimind</h1>
-        <div class="text-xs text-[var(--text-muted)] mt-1">v0.4.2</div>
+        <div class="text-xs text-[var(--text-muted)] mt-1">v0.6.3</div>
       </div>
 
       <nav class="flex-1 p-2 space-y-1">
@@ -49,6 +50,7 @@
           { id: 'timeline', label: 'Timeline', icon: '📅' },
           { id: 'spatial', label: 'Spatial Map', icon: '🗺️' },
           { id: 'graph', label: 'Concept Graph', icon: '🕸️' },
+          { id: 'archive', label: 'Archive', icon: '📦' },
           { id: 'settings', label: 'Settings', icon: '⚙️' },
         ] as tab}
           <button
@@ -83,6 +85,8 @@
           <GraphView />
         {:else if appState.activeTab === 'spatial'}
           <SpatialMap />
+        {:else if appState.activeTab === 'archive'}
+          <ArchivePanel />
         {:else if appState.activeTab === 'settings'}
           <SettingsPanel />
         {/if}

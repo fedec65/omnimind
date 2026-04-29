@@ -23,6 +23,8 @@ import {
   type Entity,
   type Relation,
   type EntityType,
+  type WisdomPattern,
+  type ArchivedMemory,
   MemoryLayer,
   DefaultSearchConfig,
   ok,
@@ -144,6 +146,22 @@ CREATE INDEX IF NOT EXISTS idx_activity_time ON activity_log(timestamp);
 CREATE INDEX IF NOT EXISTS idx_activity_context ON activity_log(context_hash);
 CREATE INDEX IF NOT EXISTS idx_entities_type ON entities(type);
 CREATE INDEX IF NOT EXISTS idx_entities_name ON entities(name);
+
+-- Cross-project wisdom patterns (aggregated from L3 + relations across namespaces)
+CREATE TABLE IF NOT EXISTS wisdom_patterns (
+  id              TEXT PRIMARY KEY,
+  pattern         TEXT NOT NULL,
+  predicate       TEXT NOT NULL,
+  subject_type    TEXT NOT NULL DEFAULT 'unknown',
+  object_type     TEXT NOT NULL DEFAULT 'unknown',
+  frequency       INTEGER NOT NULL DEFAULT 1,
+  namespaces      TEXT NOT NULL DEFAULT '[]', -- JSON array
+  first_seen      INTEGER NOT NULL,
+  last_seen       INTEGER NOT NULL,
+  example_memory_ids TEXT NOT NULL DEFAULT '[]' -- JSON array
+);
+CREATE INDEX IF NOT EXISTS idx_wisdom_predicate ON wisdom_patterns(predicate);
+CREATE INDEX IF NOT EXISTS idx_wisdom_frequency ON wisdom_patterns(frequency DESC);
 `;
 
 /** FTS5 virtual table for keyword search */
@@ -1021,6 +1039,308 @@ export class MemoryStore {
       const countRow = this.db!.prepare('SELECT COUNT(*) as count FROM memories_archive').get() as { count: number };
       const oldestRow = this.db!.prepare('SELECT MIN(archived_at) as oldest FROM memories_archive').get() as { oldest: number | null };
       return ok({ totalArchived: countRow.count, oldestArchive: oldestRow.oldest });
+    } catch (error) {
+      return err(error instanceof Error ? error : new Error(String(error)));
+    }
+  }
+
+  // ─── Archive Operations ───────────────────────────────────────────
+
+  /** List archived memories with optional namespace filter and pagination */
+  listArchive(opts: { namespace?: string | undefined; limit?: number | undefined; offset?: number | undefined } = {}): Result<ArchivedMemory[]> {
+    if (!this.initialized) return err(new Error('Store not initialized'));
+    try {
+      const conditions: string[] = [];
+      const params: (string | number)[] = [];
+      if (opts.namespace) {
+        conditions.push('namespace = ?');
+        params.push(opts.namespace);
+      }
+      const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+      const limit = opts.limit ?? 50;
+      const offset = opts.offset ?? 0;
+      params.push(limit, offset);
+      const rows = this.db!.prepare(
+        `SELECT * FROM memories_archive ${where} ORDER BY archived_at DESC LIMIT ? OFFSET ?`
+      ).all(...params) as Array<{
+        id: string; content: string; content_hash: string; embedding: Buffer | null;
+        layer: number; wing: string; room: string; namespace: string;
+        source_tool: string; source_id: string | null; confidence: number;
+        created_at: number; last_accessed_at: number; access_count: number;
+        archived_at: number;
+      }>;
+      const memories: ArchivedMemory[] = rows.map(r => ({
+        id: r.id,
+        content: r.content,
+        contentHash: r.content_hash,
+        embedding: r.embedding ? new Float32Array(r.embedding.buffer, r.embedding.byteOffset, r.embedding.byteLength / 4) : new Float32Array(384),
+        layer: r.layer as MemoryLayerId,
+        wing: r.wing,
+        room: r.room,
+        namespace: r.namespace,
+        sourceTool: r.source_tool,
+        sourceId: r.source_id,
+        confidence: r.confidence,
+        createdAt: r.created_at,
+        lastAccessedAt: r.last_accessed_at,
+        accessCount: r.access_count,
+        archivedAt: r.archived_at,
+      }));
+      return ok(memories);
+    } catch (error) {
+      return err(error instanceof Error ? error : new Error(String(error)));
+    }
+  }
+
+  /** Search archived memories by content substring */
+  searchArchive(query: string, opts: { namespace?: string | undefined; limit?: number | undefined } = {}): Result<ArchivedMemory[]> {
+    if (!this.initialized) return err(new Error('Store not initialized'));
+    try {
+      const conditions: string[] = ["content LIKE ?"];
+      const params: (string | number)[] = [`%${query}%`];
+      if (opts.namespace) {
+        conditions.push('namespace = ?');
+        params.push(opts.namespace);
+      }
+      const limit = opts.limit ?? 50;
+      params.push(limit);
+      const rows = this.db!.prepare(
+        `SELECT * FROM memories_archive WHERE ${conditions.join(' AND ')} ORDER BY archived_at DESC LIMIT ?`
+      ).all(...params) as Array<{
+        id: string; content: string; content_hash: string; embedding: Buffer | null;
+        layer: number; wing: string; room: string; namespace: string;
+        source_tool: string; source_id: string | null; confidence: number;
+        created_at: number; last_accessed_at: number; access_count: number;
+        archived_at: number;
+      }>;
+      const memories: ArchivedMemory[] = rows.map(r => ({
+        id: r.id,
+        content: r.content,
+        contentHash: r.content_hash,
+        embedding: r.embedding ? new Float32Array(r.embedding.buffer, r.embedding.byteOffset, r.embedding.byteLength / 4) : new Float32Array(384),
+        layer: r.layer as MemoryLayerId,
+        wing: r.wing,
+        room: r.room,
+        namespace: r.namespace,
+        sourceTool: r.source_tool,
+        sourceId: r.source_id,
+        confidence: r.confidence,
+        createdAt: r.created_at,
+        lastAccessedAt: r.last_accessed_at,
+        accessCount: r.access_count,
+        archivedAt: r.archived_at,
+      }));
+      return ok(memories);
+    } catch (error) {
+      return err(error instanceof Error ? error : new Error(String(error)));
+    }
+  }
+
+  /** Restore a single memory from archive back to active memories */
+  restoreFromArchive(id: string): Result<Memory> {
+    if (!this.initialized) return err(new Error('Store not initialized'));
+    try {
+      const row = this.db!.prepare('SELECT * FROM memories_archive WHERE id = ?').get(id) as {
+        id: string; content: string; content_hash: string; embedding: Buffer | null;
+        layer: number; wing: string; room: string; namespace: string;
+        source_tool: string; source_id: string | null; confidence: number;
+        created_at: number; last_accessed_at: number; access_count: number;
+        valid_from: number | null; valid_to: number | null; pinned: number;
+        compressed_ref: string | null; concept_refs: string | null;
+        archived_at: number;
+      } | undefined;
+      if (!row) return err(new Error(`Archive entry ${id} not found`));
+
+      const now = Date.now();
+      const memory: Memory = {
+        id: row.id,
+        content: row.content,
+        contentHash: row.content_hash,
+        embedding: row.embedding ? new Float32Array(row.embedding.buffer, row.embedding.byteOffset, row.embedding.byteLength / 4) : new Float32Array(384),
+        layer: row.layer as MemoryLayerId,
+        wing: row.wing,
+        room: row.room,
+        namespace: row.namespace,
+        sourceTool: row.source_tool,
+        sourceId: row.source_id,
+        confidence: row.confidence,
+        createdAt: row.created_at,
+        accessedAt: now,
+        accessCount: row.access_count + 1,
+        validFrom: row.valid_from,
+        validTo: row.valid_to,
+        pinned: row.pinned === 1,
+        compressedRef: row.compressed_ref,
+        conceptRefs: row.concept_refs ? JSON.parse(row.concept_refs) : [],
+      };
+
+      // Check for duplicate in active memories
+      const existing = this.stmtSelectByHash.get(memory.contentHash, memory.namespace) as { id: string } | undefined;
+      if (existing) {
+        this.db!.prepare('DELETE FROM memories_archive WHERE id = ?').run(id);
+        return err(new Error(`Duplicate active memory exists: ${existing.id}`));
+      }
+
+      const insertStmt = this.db!.prepare(
+        `INSERT INTO memories (
+          id, content, content_hash, embedding, layer, wing, room, source_tool, namespace,
+          source_id, confidence, created_at, accessed_at, access_count, valid_from, valid_to,
+          pinned, compressed_ref, concept_refs
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      );
+      insertStmt.run(
+        memory.id, memory.content, memory.contentHash,
+        memory.embedding ? Buffer.from(memory.embedding.buffer) : null,
+        memory.layer, memory.wing, memory.room, memory.sourceTool, memory.namespace,
+        memory.sourceId, memory.confidence, memory.createdAt, memory.accessedAt,
+        memory.accessCount, memory.validFrom, memory.validTo,
+        memory.pinned ? 1 : 0, memory.compressedRef,
+        memory.conceptRefs.length > 0 ? JSON.stringify(memory.conceptRefs) : null
+      );
+
+      // Add to vector index
+      try {
+        const buffer = Buffer.from(memory.embedding.buffer);
+        this.db!.prepare(
+          'INSERT INTO vss_memories(rowid, embedding) VALUES ((SELECT rowid FROM memories WHERE id = ?), ?)',
+        ).run(memory.id, buffer);
+      } catch {
+        // VSS insert failed — non-critical
+      }
+
+      // Remove from archive
+      this.db!.prepare('DELETE FROM memories_archive WHERE id = ?').run(id);
+
+      return ok(memory);
+    } catch (error) {
+      return err(error instanceof Error ? error : new Error(String(error)));
+    }
+  }
+
+  /** Restore multiple archived memories (batch) */
+  restoreAllFromArchive(opts: { namespace?: string | undefined; limit?: number | undefined } = {}): Result<number> {
+    if (!this.initialized) return err(new Error('Store not initialized'));
+    try {
+      const listResult = this.listArchive({ namespace: opts.namespace, limit: opts.limit ?? 100 });
+      if (!listResult.ok) return listResult;
+      let restored = 0;
+      for (const archived of listResult.value) {
+        const res = this.restoreFromArchive(archived.id);
+        if (res.ok) restored++;
+      }
+      return ok(restored);
+    } catch (error) {
+      return err(error instanceof Error ? error : new Error(String(error)));
+    }
+  }
+
+  // ─── Wisdom Patterns ──────────────────────────────────────────────
+
+  /** Aggregate cross-project wisdom patterns from relations and L3 memories */
+  aggregateWisdomPatterns(minFrequency: number = 2): Result<number> {
+    if (!this.initialized) return err(new Error('Store not initialized'));
+    try {
+      // Aggregate from relations joined with entity types
+      const rows = this.db!.prepare(`
+        SELECT
+          r.predicate,
+          e1.type as subject_type,
+          e2.type as object_type,
+          COUNT(*) as freq,
+          GROUP_CONCAT(DISTINCT m.namespace) as namespaces,
+          MIN(r.valid_from) as first_seen,
+          MAX(r.valid_from) as last_seen,
+          GROUP_CONCAT(DISTINCT r.source_memory) as example_ids
+        FROM relations r
+        JOIN entities e1 ON e1.id = r.subject_id
+        JOIN entities e2 ON e2.id = r.object_id
+        LEFT JOIN memories m ON m.id = r.source_memory
+        GROUP BY r.predicate, e1.type, e2.type
+        HAVING freq >= ?
+      `).all(minFrequency) as Array<{
+        predicate: string;
+        subject_type: string;
+        object_type: string;
+        freq: number;
+        namespaces: string | null;
+        first_seen: number | null;
+        last_seen: number | null;
+        example_ids: string | null;
+      }>;
+
+      const upsert = this.db!.prepare(`
+        INSERT INTO wisdom_patterns (
+          id, pattern, predicate, subject_type, object_type, frequency,
+          namespaces, first_seen, last_seen, example_memory_ids
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          frequency = excluded.frequency,
+          namespaces = excluded.namespaces,
+          last_seen = excluded.last_seen,
+          example_memory_ids = excluded.example_memory_ids
+      `);
+
+      const now = Date.now();
+      let count = 0;
+      for (const row of rows) {
+        const id = `${row.predicate}:${row.subject_type}:${row.object_type}`;
+        const ns = row.namespaces ? JSON.stringify(row.namespaces.split(',').filter(Boolean)) : '[]';
+        const examples = row.example_ids ? JSON.stringify(row.example_ids.split(',').filter(Boolean).slice(0, 5)) : '[]';
+        const patternText = `${row.predicate}(${row.subject_type} → ${row.object_type})`;
+        upsert.run(
+          id, patternText, row.predicate, row.subject_type, row.object_type,
+          row.freq, ns, row.first_seen ?? now, row.last_seen ?? now, examples
+        );
+        count++;
+      }
+
+      return ok(count);
+    } catch (error) {
+      return err(error instanceof Error ? error : new Error(String(error)));
+    }
+  }
+
+  /** Retrieve wisdom patterns with optional filters */
+  getWisdomPatterns(opts: { predicate?: string | undefined; minFrequency?: number | undefined; limit?: number | undefined } = {}): Result<WisdomPattern[]> {
+    if (!this.initialized) return err(new Error('Store not initialized'));
+    try {
+      const conditions: string[] = [];
+      const params: (string | number)[] = [];
+      if (opts.predicate) {
+        conditions.push('predicate = ?');
+        params.push(opts.predicate);
+      }
+      if (opts.minFrequency !== undefined) {
+        conditions.push('frequency >= ?');
+        params.push(opts.minFrequency);
+      }
+      const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+      const limit = opts.limit ?? 50;
+      params.push(limit);
+
+      const rows = this.db!.prepare(
+        `SELECT * FROM wisdom_patterns ${where} ORDER BY frequency DESC LIMIT ?`
+      ).all(...params) as Array<{
+        id: string; pattern: string; predicate: string;
+        subject_type: string; object_type: string;
+        frequency: number; namespaces: string;
+        first_seen: number; last_seen: number;
+        example_memory_ids: string;
+      }>;
+
+      const patterns: WisdomPattern[] = rows.map(r => ({
+        id: r.id,
+        pattern: r.pattern,
+        predicate: r.predicate,
+        subjectType: r.subject_type,
+        objectType: r.object_type,
+        frequency: r.frequency,
+        namespaces: JSON.parse(r.namespaces) as string[],
+        firstSeen: r.first_seen,
+        lastSeen: r.last_seen,
+        exampleMemoryIds: JSON.parse(r.example_memory_ids) as string[],
+      }));
+      return ok(patterns);
     } catch (error) {
       return err(error instanceof Error ? error : new Error(String(error)));
     }

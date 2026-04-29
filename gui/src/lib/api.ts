@@ -52,6 +52,33 @@ export interface Relation {
   confidence: number;
 }
 
+export interface ArchivedMemory {
+  id: string;
+  content: string;
+  wing: string;
+  room: string;
+  layer: number;
+  namespace: string;
+  sourceTool: string;
+  createdAt: number;
+  lastAccessedAt: number;
+  accessCount: number;
+  archivedAt: number;
+}
+
+export interface WisdomPattern {
+  id: string;
+  pattern: string;
+  predicate: string;
+  subjectType: string;
+  objectType: string;
+  frequency: number;
+  namespaces: string[];
+  firstSeen: number;
+  lastSeen: number;
+  exampleMemoryIds: string[];
+}
+
 export interface BusStats {
   adapterCount: number;
   subscriptionCount: number;
@@ -177,5 +204,50 @@ export const api = {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ maxAgeDays, limit }),
+    }),
+
+  listArchive: (opts?: { namespace?: string; limit?: number; offset?: number }) => {
+    const params = new URLSearchParams();
+    if (opts?.namespace) params.set('namespace', opts.namespace);
+    params.set('limit', String(opts?.limit ?? 50));
+    params.set('offset', String(opts?.offset ?? 0));
+    return fetchJson<{ archive: ArchivedMemory[] }>(`/api/archive?${params.toString()}`);
+  },
+
+  searchArchive: (q: string, opts?: { namespace?: string; limit?: number }) => {
+    const params = new URLSearchParams();
+    params.set('q', q);
+    if (opts?.namespace) params.set('namespace', opts.namespace);
+    params.set('limit', String(opts?.limit ?? 50));
+    return fetchJson<{ archive: ArchivedMemory[] }>(`/api/archive/search?${params.toString()}`);
+  },
+
+  restoreArchive: (id: string) =>
+    fetchJson<{ memory: Memory }>('/api/archive/restore', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id }),
+    }),
+
+  restoreAllArchive: (opts?: { namespace?: string; limit?: number }) =>
+    fetchJson<{ restored: number }>('/api/archive/restore/all', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(opts ?? {}),
+    }),
+
+  wisdomPatterns: (opts?: { predicate?: string; minFrequency?: number; limit?: number }) => {
+    const params = new URLSearchParams();
+    if (opts?.predicate) params.set('predicate', opts.predicate);
+    if (opts?.minFrequency !== undefined) params.set('minFrequency', String(opts.minFrequency));
+    params.set('limit', String(opts?.limit ?? 50));
+    return fetchJson<{ patterns: WisdomPattern[] }>(`/api/wisdom?${params.toString()}`);
+  },
+
+  aggregateWisdom: (minFrequency?: number) =>
+    fetchJson<{ aggregated: number }>('/api/wisdom/aggregate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ minFrequency }),
     }),
 };

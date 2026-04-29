@@ -61,6 +61,8 @@ import {
   type Entity,
   type Relation,
   type EntityType,
+  type WisdomPattern,
+  type ArchivedMemory,
   MemoryLayer,
   MemoryLayerId,
   ok,
@@ -198,6 +200,36 @@ export class Omnimind {
   /** Get archive statistics */
   getArchiveStats(): Result<{ totalArchived: number; oldestArchive: number | null }> {
     return this.memoryStore.getArchiveStats();
+  }
+
+  /** List archived memories */
+  listArchive(opts?: { namespace?: string | undefined; limit?: number | undefined; offset?: number | undefined }): Result<ArchivedMemory[]> {
+    return this.memoryStore.listArchive(opts);
+  }
+
+  /** Search archived memories */
+  searchArchive(query: string, opts?: { namespace?: string | undefined; limit?: number | undefined }): Result<ArchivedMemory[]> {
+    return this.memoryStore.searchArchive(query, opts);
+  }
+
+  /** Restore a memory from archive */
+  restoreFromArchive(id: string): Result<Memory> {
+    return this.memoryStore.restoreFromArchive(id);
+  }
+
+  /** Restore all memories from archive (batch) */
+  restoreAllFromArchive(opts?: { namespace?: string | undefined; limit?: number | undefined }): Result<number> {
+    return this.memoryStore.restoreAllFromArchive(opts);
+  }
+
+  /** Aggregate cross-project wisdom patterns */
+  aggregateWisdomPatterns(minFrequency?: number): Result<number> {
+    return this.memoryStore.aggregateWisdomPatterns(minFrequency);
+  }
+
+  /** Get wisdom patterns */
+  getWisdomPatterns(opts?: { predicate?: string | undefined; minFrequency?: number | undefined; limit?: number | undefined }): Result<WisdomPattern[]> {
+    return this.memoryStore.getWisdomPatterns(opts);
   }
 
   /** Store a new memory */

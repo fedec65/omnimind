@@ -120,7 +120,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
 
   // Health check
   if (path === '/api/health' && method === 'GET') {
-    sendJson(res, 200, { status: 'ok', version: '0.6.2' });
+    sendJson(res, 200, { status: 'ok', version: '0.6.3' });
     return;
   }
 
@@ -423,6 +423,92 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
       return;
     }
     sendJson(res, 200, { evicted: result.value });
+    return;
+  }
+
+  // Archive: list
+  if (path === '/api/archive' && method === 'GET') {
+    const namespace = url.searchParams.get('namespace') ?? undefined;
+    const limit = parseInt(url.searchParams.get('limit') ?? '50', 10);
+    const offset = parseInt(url.searchParams.get('offset') ?? '0', 10);
+    const result = omni!.listArchive({ namespace, limit, offset });
+    if (!result.ok) {
+      sendJson(res, 500, { error: result.error.message });
+      return;
+    }
+    sendJson(res, 200, { archive: result.value });
+    return;
+  }
+
+  // Archive: search
+  if (path === '/api/archive/search' && method === 'GET') {
+    const query = url.searchParams.get('q') ?? '';
+    const namespace = url.searchParams.get('namespace') ?? undefined;
+    const limit = parseInt(url.searchParams.get('limit') ?? '50', 10);
+    const result = omni!.searchArchive(query, { namespace, limit });
+    if (!result.ok) {
+      sendJson(res, 500, { error: result.error.message });
+      return;
+    }
+    sendJson(res, 200, { archive: result.value });
+    return;
+  }
+
+  // Archive: restore single
+  if (path === '/api/archive/restore' && method === 'POST') {
+    const body = await readBody(req);
+    const id = body.id as string | undefined;
+    if (!id) {
+      sendJson(res, 400, { error: 'id is required' });
+      return;
+    }
+    const result = omni!.restoreFromArchive(id);
+    if (!result.ok) {
+      sendJson(res, 500, { error: result.error.message });
+      return;
+    }
+    sendJson(res, 200, { memory: result.value });
+    return;
+  }
+
+  // Archive: restore all
+  if (path === '/api/archive/restore/all' && method === 'POST') {
+    const body = await readBody(req);
+    const namespace = body.namespace as string | undefined;
+    const limit = body.limit !== undefined ? parseInt(String(body.limit), 10) : undefined;
+    const result = omni!.restoreAllFromArchive({ namespace, limit });
+    if (!result.ok) {
+      sendJson(res, 500, { error: result.error.message });
+      return;
+    }
+    sendJson(res, 200, { restored: result.value });
+    return;
+  }
+
+  // Wisdom patterns: list
+  if (path === '/api/wisdom' && method === 'GET') {
+    const predicate = url.searchParams.get('predicate') ?? undefined;
+    const minFrequency = url.searchParams.get('minFrequency') ? parseInt(url.searchParams.get('minFrequency')!, 10) : undefined;
+    const limit = parseInt(url.searchParams.get('limit') ?? '50', 10);
+    const result = omni!.getWisdomPatterns({ predicate, minFrequency, limit });
+    if (!result.ok) {
+      sendJson(res, 500, { error: result.error.message });
+      return;
+    }
+    sendJson(res, 200, { patterns: result.value });
+    return;
+  }
+
+  // Wisdom patterns: aggregate
+  if (path === '/api/wisdom/aggregate' && method === 'POST') {
+    const body = await readBody(req);
+    const minFrequency = body.minFrequency !== undefined ? parseInt(String(body.minFrequency), 10) : undefined;
+    const result = omni!.aggregateWisdomPatterns(minFrequency);
+    if (!result.ok) {
+      sendJson(res, 500, { error: result.error.message });
+      return;
+    }
+    sendJson(res, 200, { aggregated: result.value });
     return;
   }
 
