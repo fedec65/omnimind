@@ -120,7 +120,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
 
   // Health check
   if (path === '/api/health' && method === 'GET') {
-    sendJson(res, 200, { status: 'ok', version: '0.6.0' });
+    sendJson(res, 200, { status: 'ok', version: '0.6.2' });
     return;
   }
 
@@ -132,8 +132,11 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
       const wing = url.searchParams.get('wing') ?? undefined;
       const room = url.searchParams.get('room') ?? undefined;
       const namespace = url.searchParams.get('namespace') ?? undefined;
+      const from = url.searchParams.get('from');
+      const to = url.searchParams.get('to');
+      const timeRange = from && to ? [parseInt(from, 10), parseInt(to, 10)] as const : undefined;
 
-      const result = await omni!.search(query, { limit, wing, room, namespace });
+      const result = await omni!.search(query, { limit, wing, room, namespace, timeRange });
       if (!result.ok) {
         sendJson(res, 500, { error: result.error.message });
         return;
@@ -200,7 +203,10 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
     const namespace = url.searchParams.get('namespace') ?? undefined;
     const namespacesParam = url.searchParams.get('namespaces');
     const namespaces = namespacesParam ? namespacesParam.split(',') : undefined;
-    const result = await omni!.search(query, { limit, namespace, namespaces });
+    const from = url.searchParams.get('from');
+    const to = url.searchParams.get('to');
+    const timeRange = from && to ? [parseInt(from, 10), parseInt(to, 10)] as const : undefined;
+    const result = await omni!.search(query, { limit, namespace, namespaces, timeRange });
     if (!result.ok) {
       sendJson(res, 500, { error: result.error.message });
       return;
