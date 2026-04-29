@@ -406,6 +406,20 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
     return;
   }
 
+  // Evict stale memories to archive
+  if (path === '/api/evict' && method === 'POST') {
+    const body = await readBody(req);
+    const maxAgeDays = body.maxAgeDays !== undefined ? parseInt(String(body.maxAgeDays), 10) : undefined;
+    const limit = body.limit !== undefined ? parseInt(String(body.limit), 10) : undefined;
+    const result = omni!.evict({ maxAgeDays, limit });
+    if (!result.ok) {
+      sendJson(res, 500, { error: result.error.message });
+      return;
+    }
+    sendJson(res, 200, { evicted: result.value });
+    return;
+  }
+
   sendJson(res, 404, { error: 'Not found' });
 }
 

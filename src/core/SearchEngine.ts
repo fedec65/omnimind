@@ -204,6 +204,19 @@ export class SearchEngine {
     }
   }
 
+  /** Remove a vector from the VSS index by memory ID */
+  async deleteVector(memoryId: string): Promise<void> {
+    if (!this.vssAvailable) return;
+    try {
+      const row = this.db.prepare('SELECT rowid FROM memories WHERE id = ?').get(memoryId) as { rowid: number } | undefined;
+      if (row) {
+        this.db.prepare('DELETE FROM vss_memories WHERE rowid = ?').run(row.rowid);
+      }
+    } catch {
+      // VSS delete failed — non-critical
+    }
+  }
+
   // ─── Private: VSS search ─────────────────────────────────────────
 
   private async vssSearch(

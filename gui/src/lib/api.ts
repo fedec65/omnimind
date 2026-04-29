@@ -167,4 +167,11 @@ export const api = {
 
   ageMemories: () =>
     fetchJson<{ aged: number; skipped: number }>('/api/age', { method: 'POST' }),
+
+  evictMemories: (maxAgeDays?: number, limit?: number) =>
+    fetchJson<{ evicted: number }>('/api/evict', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ maxAgeDays, limit }),
+    }),
 };

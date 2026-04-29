@@ -8,6 +8,7 @@
   let saveMsg = $state<string | null>(null);
   let isImporting = $state(false);
   let isAging = $state(false);
+  let isEvicting = $state(false);
   let actionMsg = $state<string | null>(null);
 
   let settings = $state<Record<string, string>>({});
@@ -17,6 +18,7 @@
     theme: 'dark',
     autoStart: 'false',
     defaultWing: 'general',
+    autoEvictDays: '90',
   });
 
   onMount(async () => {
@@ -27,6 +29,7 @@
       form.theme = settings.theme || 'dark';
       form.autoStart = settings.autoStart || 'false';
       form.defaultWing = settings.defaultWing || 'general';
+      form.autoEvictDays = settings.autoEvictDays || '90';
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load settings');
     } finally {
@@ -57,6 +60,7 @@
     form.theme = settings.theme || 'dark';
     form.autoStart = settings.autoStart || 'false';
     form.defaultWing = settings.defaultWing || 'general';
+    form.autoEvictDays = settings.autoEvictDays || '90';
     saveMsg = 'Form reset to saved values';
     setTimeout(() => (saveMsg = null), 3000);
   }
@@ -106,6 +110,22 @@
       setError(e instanceof Error ? e.message : 'Aging failed');
     } finally {
       isAging = false;
+      setTimeout(() => (actionMsg = null), 5000);
+    }
+  }
+
+  async function handleEvict() {
+    if (!confirm('This will archive old unaccessed memories to keep search fast. Pinned memories are never archived. Continue?')) return;
+    isEvicting = true;
+    actionMsg = null;
+    try {
+      const days = parseInt(form.autoEvictDays, 10);
+      const result = await api.evictMemories(days > 0 ? days : 90);
+      actionMsg = `Archived ${result.evicted} stale memories`;
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Eviction failed');
+    } finally {
+      isEvicting = false;
       setTimeout(() => (actionMsg = null), 5000);
     }
   }
@@ -184,17 +204,30 @@
       <!-- Advanced -->
       <section class="bg-[var(--surface)] rounded-xl p-6 border border-[var(--border)]">
         <h3 class="text-sm font-medium text-[var(--text-muted)] uppercase tracking-wider mb-4">Advanced</h3>
-        <div class="flex items-center justify-between">
-          <div>
-            <div class="text-sm text-[var(--text)]">Auto-start Server</div>
-            <div class="text-xs text-[var(--text-muted)]">Start Omnimind server automatically on login.</div>
+        <div class="space-y-4">
+          <div class="flex items-center justify-between">
+            <div>
+              <div class="text-sm text-[var(--text)]">Auto-start Server</div>
+              <div class="text-xs text-[var(--text-muted)]">Start Omnimind server automatically on login.</div>
+            </div>
+            <button
+              onclick={() => form.autoStart = form.autoStart === 'true' ? 'false' : 'true'}
+              class="relative w-11 h-6 rounded-full transition-colors {form.autoStart === 'true' ? 'bg-[var(--accent)]' : 'bg-[var(--border)]'}"
+            >
+              <span class="absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white transition-transform {form.autoStart === 'true' ? 'translate-x-5' : ''}"></span>
+            </button>
           </div>
-          <button
-            onclick={() => form.autoStart = form.autoStart === 'true' ? 'false' : 'true'}
-            class="relative w-11 h-6 rounded-full transition-colors {form.autoStart === 'true' ? 'bg-[var(--accent)]' : 'bg-[var(--border)]'}"
-          >
-            <span class="absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white transition-transform {form.autoStart === 'true' ? 'translate-x-5' : ''}"></span>
-          </button>
+          <div>
+            <label class="block text-sm text-[var(--text)] mb-1">Auto-Evict After (days)</label>
+            <input
+              type="number"
+              bind:value={form.autoEvictDays}
+              min="0"
+              placeholder="90"
+              class="w-full bg-[var(--bg)] border border-[var(--border)] rounded-lg px-3 py-2 text-sm text-[var(--text)] focus:outline-none focus:border-[var(--accent)]"
+            />
+            <p class="text-xs text-[var(--text-muted)] mt-1">Archive memories unaccessed for this many days (0 = disabled).</p>
+          </div>
         </div>
       </section>
 
@@ -211,6 +244,9 @@
           </button>
           <button onclick={handleAge} disabled={isAging} class="px-5 py-2.5 bg-[var(--surface)] border border-[var(--border)] text-sm rounded-lg hover:bg-[var(--surface-hover)] transition-colors disabled:opacity-50">
             {isAging ? 'Aging...' : 'Age Memories Now'}
+          </button>
+          <button onclick={handleEvict} disabled={isEvicting} class="px-5 py-2.5 bg-red-500/10 border border-red-500/30 text-red-400 text-sm rounded-lg hover:bg-red-500/20 transition-colors disabled:opacity-50">
+            {isEvicting ? 'Archiving...' : 'Evict Stale Memories'}
           </button>
         </div>
         {#if actionMsg}

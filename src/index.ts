@@ -62,6 +62,7 @@ import {
   type Relation,
   type EntityType,
   MemoryLayer,
+  MemoryLayerId,
   ok,
   err,
 } from './core/types.js';
@@ -171,10 +172,33 @@ export class Omnimind {
 
     const omni = new Omnimind(store, bus, predictor, patternStore, activityTracker, contextInjector);
     console.log(`[Omnimind] Initialized at ${dbPath}`);
+
+    // Auto-evict stale memories on startup (configurable via setting)
+    const autoEvictSetting = omni.getSetting('autoEvictDays');
+    const days = autoEvictSetting.ok && autoEvictSetting.value !== null
+      ? parseInt(autoEvictSetting.value, 10)
+      : 90;
+    if (days > 0) {
+      const evictResult = store.evictStaleMemories({ maxAgeDays: days });
+      if (evictResult.ok && evictResult.value > 0) {
+        console.log(`[Omnimind] Auto-evicted ${evictResult.value} stale memories (> ${days} days)`);
+      }
+    }
+
     return omni;
   }
 
   // ─── Core Operations ────────────────────────────────────────────
+
+  /** Evict stale memories to the archive */
+  evict(opts: { maxAgeDays?: number | undefined; layer?: MemoryLayerId | MemoryLayerId[] | undefined; limit?: number | undefined } = {}): Result<number> {
+    return this.memoryStore.evictStaleMemories(opts);
+  }
+
+  /** Get archive statistics */
+  getArchiveStats(): Result<{ totalArchived: number; oldestArchive: number | null }> {
+    return this.memoryStore.getArchiveStats();
+  }
 
   /** Store a new memory */
   async store(content: string, meta: MemoryMeta): Promise<Result<Memory>> {

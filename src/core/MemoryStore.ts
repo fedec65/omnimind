@@ -57,6 +57,27 @@ CREATE TABLE IF NOT EXISTS memories (
   concept_refs    TEXT -- JSON array
 );
 
+-- Archive for evicted memories (preserves data without cluttering active search)
+CREATE TABLE IF NOT EXISTS memories_archive (
+  id              TEXT PRIMARY KEY,
+  content         TEXT NOT NULL,
+  content_hash    TEXT NOT NULL,
+  embedding       BLOB,
+  layer           INTEGER NOT NULL DEFAULT 0,
+  wing            TEXT NOT NULL DEFAULT 'general',
+  room            TEXT NOT NULL DEFAULT 'default',
+  namespace       TEXT NOT NULL DEFAULT 'default',
+  source_tool     TEXT NOT NULL DEFAULT 'unknown',
+  source_id       TEXT,
+  confidence      REAL NOT NULL DEFAULT 1.0,
+  created_at      INTEGER NOT NULL,
+  last_accessed_at INTEGER NOT NULL,
+  access_count    INTEGER NOT NULL DEFAULT 0,
+  archived_at     INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_archive_namespace ON memories_archive(namespace);
+CREATE INDEX IF NOT EXISTS idx_archive_archived_at ON memories_archive(archived_at);
+
 -- Entity table for knowledge graph
 CREATE TABLE IF NOT EXISTS entities (
   id              TEXT PRIMARY KEY,
@@ -906,6 +927,100 @@ export class MemoryStore {
       };
 
       return ok(stats);
+    } catch (error) {
+      return err(error instanceof Error ? error : new Error(String(error)));
+    }
+  }
+
+  // ─── Memory Eviction / Archive ────────────────────────────────────
+
+  /**
+   * Archive stale memories to keep the active index lean.
+   *
+   * Memories matching the criteria are COPIED to `memories_archive`
+   * and then DELETED from `memories`. Pinned memories are never
+   * evicted. Only L0/L1 are evicted by default.
+   */
+  evictStaleMemories(opts: {
+    maxAgeDays?: number | undefined;
+    layer?: MemoryLayerId | MemoryLayerId[] | undefined;
+    limit?: number | undefined;
+  } = {}): Result<number> {
+    if (!this.initialized) return err(new Error('Store not initialized'));
+
+    try {
+      const maxAgeDays = opts.maxAgeDays ?? 90;
+      const cutoff = Date.now() - maxAgeDays * 24 * 60 * 60 * 1000;
+      const layers = opts.layer !== undefined
+        ? (Array.isArray(opts.layer) ? opts.layer : [opts.layer])
+        : [MemoryLayer.Verbatim, MemoryLayer.Compressed];
+      const limit = opts.limit ?? 1000;
+
+      // Find candidates (not pinned, old enough, matching layers)
+      const layerPlaceholders = layers.map(() => '?').join(',');
+      const candidates = this.db!.prepare(
+        `SELECT * FROM memories
+         WHERE pinned = 0 AND accessed_at < ? AND layer IN (${layerPlaceholders})
+         ORDER BY accessed_at ASC
+         LIMIT ?`,
+      ).all(cutoff, ...layers, limit) as Array<{
+        id: string; content: string; content_hash: string; embedding: Buffer;
+        layer: number; wing: string; room: string; namespace: string;
+        source_tool: string; source_id: string | null; confidence: number;
+        created_at: number; accessed_at: number | null; access_count: number;
+      }>;
+
+      if (candidates.length === 0) return ok(0);
+
+      // Remove from vector index BEFORE deleting from memories
+      for (const row of candidates) {
+        this.searchEngine!.deleteVector(row.id);
+      }
+
+      const archiveStmt = this.db!.prepare(
+        `INSERT INTO memories_archive (
+          id, content, content_hash, embedding, layer, wing, room, namespace,
+          source_tool, source_id, confidence, created_at, last_accessed_at,
+          access_count, archived_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      );
+
+      const deleteStmt = this.db!.prepare('DELETE FROM memories WHERE id = ?');
+
+      const tx = this.db!.transaction((items: typeof candidates) => {
+        for (const row of items) {
+          archiveStmt.run(
+            row.id, row.content, row.content_hash, row.embedding,
+            row.layer, row.wing, row.room, row.namespace,
+            row.source_tool, row.source_id, row.confidence,
+            row.created_at, row.accessed_at ?? 0, row.access_count,
+            Date.now(),
+          );
+          deleteStmt.run(row.id);
+          // FTS trigger will auto-remove from memories_fts on DELETE
+        }
+      });
+
+      tx(candidates);
+
+      // Remove from vector index
+      for (const row of candidates) {
+        this.searchEngine!.deleteVector(row.id);
+      }
+
+      return ok(candidates.length);
+    } catch (error) {
+      return err(error instanceof Error ? error : new Error(String(error)));
+    }
+  }
+
+  /** Statistics about the archive */
+  getArchiveStats(): Result<{ totalArchived: number; oldestArchive: number | null }> {
+    if (!this.initialized) return err(new Error('Store not initialized'));
+    try {
+      const countRow = this.db!.prepare('SELECT COUNT(*) as count FROM memories_archive').get() as { count: number };
+      const oldestRow = this.db!.prepare('SELECT MIN(archived_at) as oldest FROM memories_archive').get() as { oldest: number | null };
+      return ok({ totalArchived: countRow.count, oldestArchive: oldestRow.oldest });
     } catch (error) {
       return err(error instanceof Error ? error : new Error(String(error)));
     }
