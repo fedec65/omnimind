@@ -16,7 +16,7 @@ describe('End-to-End', () => {
 
   beforeEach(async () => {
     tmpDir = mkdtempSync(join(tmpdir(), 'omnimind-e2e-'));
-    omni = await Omnimind.create({ dataDir: tmpDir });
+    omni = await Omnimind.create({ dataDir: tmpDir, adapters: false });
   });
 
   afterEach(() => {

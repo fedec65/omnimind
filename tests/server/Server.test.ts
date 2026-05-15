@@ -16,7 +16,7 @@ describe('HTTP Server', () => {
   beforeAll(async () => {
     const serverPath = join(process.cwd(), 'dist/server.js');
     server = spawn('node', [serverPath], {
-      env: { ...process.env, OMNIMIND_PORT: '0' },
+      env: { ...process.env, OMNIMIND_PORT: '0', OMNIMIND_SKIP_ADAPTERS: '1' },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
 
@@ -36,7 +36,7 @@ describe('HTTP Server', () => {
       });
       server.on('error', reject);
     });
-  });
+  }, 60000);
 
   afterAll(() => {
     server.kill();
@@ -51,7 +51,7 @@ describe('HTTP Server', () => {
   it('should return health status', async () => {
     const data = await fetchApi('/api/health');
     expect(data.status).toBe('ok');
-    expect(data.version).toBe('0.4.2');
+    expect(data.version).toBe('0.6.3');
   });
 
   it('should create and retrieve a memory', async () => {

@@ -49,6 +49,8 @@ export class ClaudeAdapter extends BaseAdapter {
   private debounceTimer: ReturnType<typeof setTimeout> | null = null;
   private processedHashes = new Map<string, number>();
   private isProcessing = false;
+  private activePromise: Promise<void> | null = null;
+  private disposed = false;
 
   private readonly decisionPatterns = [
     /(?:we decided|let's use|we'll use|going with|chosen|selected)\s+(.{10,200})/gi,
@@ -98,6 +100,7 @@ export class ClaudeAdapter extends BaseAdapter {
   }
 
   async onDisconnect(): Promise<void> {
+    this.disposed = true;
     if (this.debounceTimer) {
       clearTimeout(this.debounceTimer);
       this.debounceTimer = null;
@@ -105,6 +108,11 @@ export class ClaudeAdapter extends BaseAdapter {
     if (this.watcher) {
       this.watcher.close();
       this.watcher = null;
+    }
+    // Wait for any ongoing processing to finish before closing
+    if (this.activePromise) {
+      await this.activePromise;
+      this.activePromise = null;
     }
     this.saveCheckpoint();
     this.markDisconnected();
@@ -147,6 +155,7 @@ export class ClaudeAdapter extends BaseAdapter {
       let skippedCount = 0;
 
       for (const filePath of files) {
+        if (this.disposed) break;
         const result = await this.processFile(filePath);
         if (result === 'stored') storedCount++;
         else if (result === 'skipped') skippedCount++;
@@ -167,7 +176,9 @@ export class ClaudeAdapter extends BaseAdapter {
   /** One-shot bulk import of all existing .jsonl files */
   private async processAllFiles(): Promise<void> {
     console.log(`[ClaudeAdapter] Starting bulk import from ${this.watchPath}...`);
-    await this.processConversations();
+    this.activePromise = this.processConversations();
+    await this.activePromise;
+    this.activePromise = null;
     console.log(`[ClaudeAdapter] Bulk import complete.`);
   }
 

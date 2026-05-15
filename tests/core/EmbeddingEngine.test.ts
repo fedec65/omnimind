@@ -8,7 +8,7 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import { EmbeddingEngine } from '../../src/core/EmbeddingEngine.js';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { mkdtempSync, rmSync, existsSync } from 'fs';
+import { mkdtempSync, rmSync } from 'fs';
 
 describe('EmbeddingEngine', () => {
   let engine: EmbeddingEngine;

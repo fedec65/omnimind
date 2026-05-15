@@ -93,7 +93,6 @@ Some random text that is not a decision.
   });
 
   it('should write notifications to CLAUDE.md on external events', async () => {
-    const cwd = process.cwd();
     // Note: we can't easily test CLAUDE.md writing without mocking fs,
     // but we verify the onMemoryEvent handler doesn't throw
     const event = {

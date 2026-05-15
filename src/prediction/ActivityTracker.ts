@@ -116,9 +116,8 @@ export class ActivityTracker {
       // Monkey-patch bus.publish to intercept events for our tracking
       // (We use a wrapper since there's no direct listener API)
       const originalPublish = this.bus.publish.bind(this.bus);
-      const tracker = this;
-      this.bus.publish = async function (event: MemoryEvent) {
-        tracker.onBusEvent(event);
+      this.bus.publish = async (event: MemoryEvent) => {
+        this.onBusEvent(event);
         return originalPublish(event);
       };
 

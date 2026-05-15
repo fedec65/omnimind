@@ -77,6 +77,8 @@ export interface OmnimindConfig {
   dataDir?: string | undefined;
   dbName?: string | undefined;
   modelPath?: string | undefined;
+  /** Register cross-tool bus adapters (Claude, Cursor, ChatGPT). Default: true. */
+  adapters?: boolean | undefined;
 }
 
 // ─── Main API ─────────────────────────────────────────────────────
@@ -142,22 +144,26 @@ export class Omnimind {
     // Initialize cross-tool memory bus
     const bus = new MemoryBus(store);
 
-    const claudeAdapter = new ClaudeAdapter(bus, { processExistingOnConnect: true });
-    const claudeResult = await bus.registerAdapter(claudeAdapter);
-    if (!claudeResult.ok) {
-      console.error(`[Omnimind] Claude adapter failed: ${claudeResult.error.message}`);
-    }
+    const enableAdapters = config.adapters !== false;
 
-    const cursorAdapter = new CursorAdapter(bus);
-    const cursorResult = await bus.registerAdapter(cursorAdapter);
-    if (!cursorResult.ok) {
-      console.error(`[Omnimind] Cursor adapter failed: ${cursorResult.error.message}`);
-    }
+    if (enableAdapters) {
+      const claudeAdapter = new ClaudeAdapter(bus, { processExistingOnConnect: true });
+      const claudeResult = await bus.registerAdapter(claudeAdapter);
+      if (!claudeResult.ok) {
+        console.error(`[Omnimind] Claude adapter failed: ${claudeResult.error.message}`);
+      }
 
-    const chatgptAdapter = new ChatGPTAdapter(bus);
-    const chatgptResult = await bus.registerAdapter(chatgptAdapter);
-    if (!chatgptResult.ok) {
-      console.error(`[Omnimind] ChatGPT adapter failed: ${chatgptResult.error.message}`);
+      const cursorAdapter = new CursorAdapter(bus);
+      const cursorResult = await bus.registerAdapter(cursorAdapter);
+      if (!cursorResult.ok) {
+        console.error(`[Omnimind] Cursor adapter failed: ${cursorResult.error.message}`);
+      }
+
+      const chatgptAdapter = new ChatGPTAdapter(bus);
+      const chatgptResult = await bus.registerAdapter(chatgptAdapter);
+      if (!chatgptResult.ok) {
+        console.error(`[Omnimind] ChatGPT adapter failed: ${chatgptResult.error.message}`);
+      }
     }
 
     // Initialize activity tracking and context injection
@@ -272,6 +278,11 @@ export class Omnimind {
   /** Delete a memory */
   async delete(id: string): Promise<Result<void>> {
     return this.memoryStore.delete(id);
+  }
+
+  /** Update a memory's mutable fields */
+  async update(id: string, updates: Partial<Pick<Memory, 'content' | 'wing' | 'room' | 'pinned'>>): Promise<Result<Memory>> {
+    return this.memoryStore.update(id, updates);
   }
 
   /** Pin a memory (prevent aging) */
@@ -629,9 +640,8 @@ export class Omnimind {
   }
 
   /** Get unresolved conflict report */
-  getConflictReport(): Result<ConflictResolution[]> {
-    // For now, return empty — full conflict tracking would require persistence
-    return ok([]);
+  getConflictReport(): Result<readonly ConflictResolution[]> {
+    return ok(this.bus.getConflicts());
   }
 
   /**
@@ -697,6 +707,7 @@ export class Omnimind {
   /** Close all resources */
   close(): void {
     this.activityTracker.stop();
+    this.bus.close();
     this.patternStore.close();
     this.memoryStore.close();
   }

@@ -36,6 +36,8 @@ export class MemoryBus {
   private eventsPublished = 0;
   private eventsRouted = 0;
   private conflictsDetected = 0;
+  private conflicts: import('./types.js').ConflictResolution[] = [];
+  private readonly maxConflicts = 100;
 
   constructor(store: MemoryStore) {
     this.store = store;
@@ -67,6 +69,12 @@ export class MemoryBus {
     }
   }
 
+  close(): void {
+    for (const toolId of Array.from(this.adapters.keys())) {
+      this.unregisterAdapter(toolId);
+    }
+  }
+
   // ─── Publish Pipeline ───────────────────────────────────────────
 
   async publish(event: MemoryEvent): Promise<Result<void>> {
@@ -83,6 +91,10 @@ export class MemoryBus {
 
       if (conflictResult.value) {
         this.conflictsDetected++;
+        this.conflicts.push(conflictResult.value);
+        if (this.conflicts.length > this.maxConflicts) {
+          this.conflicts.shift();
+        }
         await this.applyResolution(conflictResult.value);
       }
 
@@ -168,6 +180,10 @@ export class MemoryBus {
 
   getDeadLetter(): readonly DeadLetterEvent[] {
     return this.deadLetter;
+  }
+
+  getConflicts(): readonly import('./types.js').ConflictResolution[] {
+    return this.conflicts;
   }
 
   // ─── Direct Store Operations ────────────────────────────────────

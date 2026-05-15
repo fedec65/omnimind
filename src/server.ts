@@ -52,7 +52,8 @@ let omni: Omnimind | null = null;
 let serverPort = 0;
 
 async function main(): Promise<void> {
-  omni = await Omnimind.create({ dataDir: DATA_DIR });
+  const skipAdapters = process.env.OMNIMIND_SKIP_ADAPTERS === '1';
+  omni = await Omnimind.create({ dataDir: DATA_DIR, adapters: !skipAdapters });
 
   const server = createServer((req, res) => {
     // CORS for Tauri origin
@@ -192,6 +193,26 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
         return;
       }
       sendJson(res, 204, null);
+      return;
+    }
+
+    if (method === 'PUT') {
+      const body = await readBody(req);
+      const updates: { content?: string; wing?: string; room?: string; pinned?: boolean } = {};
+      if (body.content !== undefined) updates.content = body.content as string;
+      if (body.wing !== undefined) updates.wing = body.wing as string;
+      if (body.room !== undefined) updates.room = body.room as string;
+      if (body.pinned !== undefined) updates.pinned = Boolean(body.pinned);
+      if (Object.keys(updates).length === 0) {
+        sendJson(res, 400, { error: 'No fields to update' });
+        return;
+      }
+      const result = await omni!.update(id, updates);
+      if (!result.ok) {
+        sendJson(res, 500, { error: result.error.message });
+        return;
+      }
+      sendJson(res, 200, { memory: result.value });
       return;
     }
   }
@@ -346,6 +367,17 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
   // Bus status
   if (path === '/api/bus/status' && method === 'GET') {
     sendJson(res, 200, omni!.bus.getStats());
+    return;
+  }
+
+  // Bus conflicts
+  if (path === '/api/bus/conflicts' && method === 'GET') {
+    const result = omni!.getConflictReport();
+    if (!result.ok) {
+      sendJson(res, 500, { error: result.error.message });
+      return;
+    }
+    sendJson(res, 200, { conflicts: result.value });
     return;
   }
 

@@ -7,7 +7,6 @@ import { MemoryStore } from '../../src/core/MemoryStore.js';
 import {
   type MemoryEvent,
   type ToolAdapter,
-  type BusSubscription,
   EventType,
   createMemoryEvent,
 } from '../../src/bus/types.js';
@@ -36,7 +35,7 @@ class TestAdapter implements ToolAdapter {
     this.receivedEvents.push(event);
   }
 
-  async publishEvent(event: MemoryEvent): Promise<void> {
+  async publishEvent(_event: MemoryEvent): Promise<void> {
     // Handled by base in real adapter
   }
 }
@@ -215,5 +214,45 @@ describe('MemoryBus', () => {
 
     const clock = bus.getVectorClock();
     expect(clock['tool-a']).toBeGreaterThanOrEqual(2);
+  });
+
+  it('should persist and return conflicts', async () => {
+    // Seed a memory in the store
+    const seed = await store.store('Original fact', { wing: 'test', sourceTool: 'seed' });
+    expect(seed.ok).toBe(true);
+    if (!seed.ok) return;
+
+    // Publish an update event from a different tool on the same memory
+    const conflictEvent = createMemoryEvent('tool-b', EventType.Update, seed.value.id, {
+      content: 'Conflicting update',
+      wing: 'test',
+    });
+
+    const result = await bus.publish(conflictEvent);
+    expect(result.ok).toBe(true);
+
+    // Conflicts should be tracked
+    const conflicts = bus.getConflicts();
+    expect(conflicts.length).toBeGreaterThan(0);
+  });
+
+  it('should limit stored conflicts to maxConflicts', async () => {
+    // Seed a memory
+    const seed = await store.store('Conflict target', { wing: 'test', sourceTool: 'seed' });
+    expect(seed.ok).toBe(true);
+    if (!seed.ok) return;
+
+    // Publish many conflicting events
+    for (let i = 0; i < 5; i++) {
+      const event = createMemoryEvent(`tool-${i}`, EventType.Update, seed.value.id, {
+        content: `Update ${i}`,
+        wing: 'test',
+      });
+      await bus.publish(event);
+    }
+
+    const conflicts = bus.getConflicts();
+    expect(conflicts.length).toBeGreaterThan(0);
+    expect(conflicts.length).toBeLessThanOrEqual(100); // maxConflicts
   });
 });

@@ -14,7 +14,7 @@ describe('Import/Export', () => {
 
   beforeEach(async () => {
     tmpDir = mkdtempSync(join(tmpdir(), 'omnimind-io-test-'));
-    omni = await Omnimind.create({ dataDir: tmpDir });
+    omni = await Omnimind.create({ dataDir: tmpDir, adapters: false });
   });
 
   afterEach(() => {
@@ -36,7 +36,7 @@ describe('Import/Export', () => {
 
     // Create a fresh instance in a new directory
     const tmpDir2 = mkdtempSync(join(tmpdir(), 'omnimind-io-test2-'));
-    const omni2 = await Omnimind.create({ dataDir: tmpDir2 });
+    const omni2 = await Omnimind.create({ dataDir: tmpDir2, adapters: false });
 
     const importResult = await omni2.importFromJson(json);
     expect(importResult.ok).toBe(true);

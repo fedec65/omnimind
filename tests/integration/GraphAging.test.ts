@@ -19,7 +19,7 @@ describe('Graph Aging', () => {
 
   beforeEach(async () => {
     tmpDir = mkdtempSync(join(tmpdir(), 'omnimind-graph-aging-'));
-    omni = await Omnimind.create({ dataDir: tmpDir });
+    omni = await Omnimind.create({ dataDir: tmpDir, adapters: false });
   });
 
   afterEach(() => {
@@ -72,14 +72,14 @@ describe('Graph Aging', () => {
       const upsert = omni.memoryStore.upsertEntity({
         id: entity.id,
         name: entity.name,
-        type: entity.type as any,
+        type: entity.type as import('../../src/core/types.js').EntityType,
         description: null,
       });
       expect(upsert.ok).toBe(true);
     }
 
     // Extract and persist relations
-    const relations = extractRelations(memory.content, entities as any, memory.id);
+    const relations = extractRelations(memory.content, entities as import("../../src/core/types.js").Entity[], memory.id);
     for (const relation of relations) {
       const insert = omni.memoryStore.insertRelation(relation);
       expect(insert.ok).toBe(true);
