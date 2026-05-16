@@ -68,7 +68,7 @@ jobs:
         run: npm ci
 
       - name: Install GUI npm dependencies
-        run: cd gui && npm install
+        run: cd gui && npm ci
 
       - name: Download embedding model
         run: node scripts/download-model.js
