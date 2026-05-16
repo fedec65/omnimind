@@ -34,7 +34,8 @@
     "server": "node dist/server.js",
     "server:dev": "tsx watch src/server.ts",
     "gui:dev": "tauri dev",
-    "gui:build": "tauri build"
+    "gui:build": "tauri build",
+    "tauri": "tauri"
   },
   "keywords": [
     "llm",
