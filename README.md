@@ -59,14 +59,35 @@ Omnimind is a local memory engine that stores, searches, predicts, and visualize
 
 Every memory exists simultaneously as **text**, **vector embedding**, and **knowledge graph** — kept in sync automatically.
 
-## Quick Start
+## Installation
+
+### Desktop App (Recommended)
+
+Download the latest release for your platform — no Node.js or technical setup required.
+
+| Platform | Download | Size |
+|----------|----------|------|
+| **macOS** (Apple Silicon) | `.dmg` | ~185 MB |
+| **macOS** (Intel) | `.dmg` | ~186 MB |
+| **Windows** | `.msi` installer | ~175 MB |
+| **Linux** (Ubuntu/Debian) | `.deb` package | ~400 MB |
+
+📦 **[Download v0.6.4](https://github.com/fedec65/omnimind/releases/latest)**
+
+**First launch:**
+1. Install the app (drag to Applications on macOS, run the installer on Windows, or `dpkg -i` on Linux)
+2. Double-click to open — the app creates its data directory and downloads the ~80MB ONNX model on first run
+3. The GUI opens automatically at `http://localhost:8844`
+
+> **Note:** The desktop app includes the visual explorer and local memory engine. To connect Omnimind to Claude Code, Cursor, or other AI tools, you still need to set up [MCP integration](#mcp-integration) separately.
+
+### CLI / npm (Developers)
+
+For command-line usage, programmatic access, or MCP server integration:
 
 ```bash
-# Install dependencies
-npm install
-
-# Build
-npm run build
+# Install globally
+npm install -g omnimind
 
 # Initialize (creates ~/.omnimind/)
 npx omnimind init
@@ -79,15 +100,25 @@ npx omnimind search "API architecture decision"
 
 # Get predictions for current context
 npx omnimind predict
-
-# Launch the desktop GUI
-npm run gui:dev
-
-# Start the HTTP server
-npm run server
 ```
 
 **First run** downloads the ~80MB ONNX model (`all-MiniLM-L6-v2`) from Hugging Face. All subsequent operations are fully offline.
+
+### Development
+
+```bash
+# Clone and install dependencies
+npm install
+
+# Build TypeScript
+npm run build
+
+# Start HTTP server
+npm run server
+
+# Launch GUI in dev mode
+npm run gui:dev
+```
 
 ## CLI Commands
 
@@ -148,7 +179,9 @@ Keys are derived from your machine fingerprint + optional passphrase via HKDF-SH
 
 ### Connecting to Claude Code
 
-Add to your Claude Code settings:
+The desktop app does **not** automatically configure Claude Code or Cursor — you need to point them to the MCP server manually.
+
+Add to your Claude Code settings (`~/.claude/settings.json`):
 
 ```json
 {
@@ -161,12 +194,14 @@ Add to your Claude Code settings:
 }
 ```
 
+**Requirements:** `npm install -g omnimind` must be available in your PATH so that `npx omnimind-mcp` resolves correctly. The MCP server runs independently of the desktop GUI.
+
 ## HTTP API
 
-Omnimind exposes a local REST API (default port `8844`) for the desktop GUI and external integrations:
+Omnimind exposes a local REST API (default port `8844`) used by the desktop GUI and available for external integrations:
 
 ```bash
-# Start the server
+# Start the server manually (if not using the desktop app)
 npm run server
 ```
 
@@ -186,13 +221,13 @@ npm run server
 
 ## Desktop GUI
 
-Omnimind Explorer is a cross-platform desktop app built with **Tauri v2** and **Svelte 5**.
+Omnimind Explorer is a cross-platform desktop app built with **Tauri v2** and **Svelte 5**. It bundles the Node.js backend, SQLite database, and ONNX model into a single installable package — no separate server setup needed.
 
 ```bash
-# Development (hot reload)
+# Development (hot reload) — requires Node.js + Rust
 npm run gui:dev
 
-# Production build
+# Production build — produces .dmg / .msi / .deb
 npm run gui:build
 ```
 
@@ -204,14 +239,17 @@ npm run gui:build
 
 ## Development
 
+These commands are for contributors working on the Omnimind codebase.
+
 ```bash
-# Install
+# Install dependencies
 npm install
+cd gui && npm install
 
 # Type-check
 npm run typecheck
 
-# Build
+# Build TypeScript
 npm run build
 
 # Run tests
@@ -235,7 +273,7 @@ npm run server
 # GUI dev mode
 npm run gui:dev
 
-# GUI production build
+# GUI production build (requires Rust toolchain)
 npm run gui:build
 ```
 
@@ -258,6 +296,7 @@ npm run gui:build
 | Validation | Zod |
 | Testing | Vitest + v8 coverage |
 | **Desktop GUI** | **Tauri v2 + Svelte 5 + Vite + TailwindCSS** |
+| **Distribution** | **.dmg (macOS), .msi (Windows), .deb (Linux)** |
 | **Charts** | **D3.js** |
 | **HTTP Server** | **Node.js built-in (`node:http`)** |
 
