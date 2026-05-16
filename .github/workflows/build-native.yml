@@ -35,7 +35,7 @@ jobs:
             target: x86_64-apple-darwin
             node_platform: 'darwin-x64'
           - platform: 'ubuntu-22.04'
-            args: ''
+            args: '--bundles deb'
             target: x86_64-unknown-linux-gnu
             node_platform: 'linux-x64'
           - platform: 'windows-latest'
@@ -101,7 +101,7 @@ jobs:
           Write-Host "Downloading Node.js for Windows"
           Invoke-WebRequest -Uri $NODE_URL -OutFile "$env:TEMP\node-win.zip" -UseBasicParsing
           Expand-Archive -Path "$env:TEMP\node-win.zip" -DestinationPath "$env:TEMP\node-extract" -Force
-          Copy-Item -Recurse "$env:TEMP\node-extract\node-v${NODE_VERSION}-win-x64\*" "$RESOURCES\node\" -Force
+          Copy-Item -Recurse -Force "$env:TEMP\node-extract\node-v${NODE_VERSION}-win-x64" "$RESOURCES\node"
 
           Copy-Item -Recurse dist "$RESOURCES\dist" -Force
           Copy-Item -Recurse node_modules "$RESOURCES\node_modules" -Force
@@ -136,7 +136,7 @@ jobs:
             ### Installation
             - **macOS**: Download the `.dmg` for your chip (Apple Silicon = `aarch64`, Intel = `x86_64`), open it, and drag the app to Applications.
             - **Windows**: Download the `.msi` installer and run it.
-            - **Linux**: Download the `.AppImage` (portable) or `.deb` (Debian/Ubuntu).
+            - **Linux**: Download the `.deb` package (Debian/Ubuntu) or `.AppImage` (portable).
 
             On first launch, the app creates its data directory and initializes the database automatically.
           releaseDraft: ${{ inputs.draft || 'true' }}
