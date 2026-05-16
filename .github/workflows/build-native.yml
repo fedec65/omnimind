@@ -1,0 +1,139 @@
+name: Build Native App
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      draft:
+        description: 'Create as draft release'
+        required: false
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+
+jobs:
+  build-tauri:
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: 'macos-latest'
+            args: '--target aarch64-apple-darwin'
+            target: aarch64-apple-darwin
+            node_platform: 'darwin-arm64'
+          - platform: 'macos-latest'
+            args: '--target x86_64-apple-darwin'
+            target: x86_64-apple-darwin
+            node_platform: 'darwin-x64'
+          - platform: 'ubuntu-22.04'
+            args: ''
+            target: x86_64-unknown-linux-gnu
+            node_platform: 'linux-x64'
+          - platform: 'windows-latest'
+            args: ''
+            target: x86_64-pc-windows-msvc
+            node_platform: 'win32-x64'
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Setup Rust
+        uses: dtolnay/rust-action@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install dependencies (Ubuntu only)
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - name: Install npm dependencies
+        run: npm ci --omit=dev
+
+      - name: Download embedding model
+        run: node scripts/download-model.js
+
+      - name: Build TypeScript
+        run: npm run build
+
+      - name: Prepare resources (Unix)
+        if: matrix.platform != 'windows-latest'
+        run: |
+          chmod +x scripts/prepare-resources.sh
+          ./scripts/prepare-resources.sh ${{ matrix.node_platform }}
+
+      - name: Prepare resources (Windows)
+        if: matrix.platform == 'windows-latest'
+        shell: pwsh
+        run: |
+          $NODE_VERSION = "20.19.0"
+          $PLATFORM = "${{ matrix.node_platform }}"
+          $RESOURCES = "src-tauri/resources"
+          $NODE_URL = "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-win-x64.zip"
+
+          Remove-Item -Recurse -Force $RESOURCES -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Path $RESOURCES -Force | Out-Null
+
+          # Download Node.js
+          Write-Host "Downloading Node.js for Windows"
+          Invoke-WebRequest -Uri $NODE_URL -OutFile "$env:TEMP\node-win.zip"
+          Expand-Archive -Path "$env:TEMP\node-win.zip" -DestinationPath "$env:TEMP\node-extract" -Force
+          Copy-Item -Recurse "$env:TEMP\node-extract\node-v${NODE_VERSION}-win-x64\*" "$RESOURCES\node\" -Force
+
+          # Copy backend
+          Copy-Item -Recurse dist "$RESOURCES\dist" -Force
+          Copy-Item -Recurse node_modules "$RESOURCES\node_modules" -Force
+
+          # Copy model cache
+          $CACHE_SRC = "node_modules\@xenova\transformers\.cache"
+          if (Test-Path $CACHE_SRC) {
+            New-Item -ItemType Directory -Path "$RESOURCES\.cache" -Force | Out-Null
+            Copy-Item -Recurse "$CACHE_SRC\*" "$RESOURCES\.cache\" -Force
+          }
+
+          # Prune
+          Set-Location $RESOURCES
+          node ..\..\scripts\prune-for-bundle.js win32
+          Set-Location ..\..
+
+          # Size report
+          Write-Host "Resource sizes:"
+          Get-ChildItem $RESOURCES | ForEach-Object {
+            $size = (Get-ChildItem $_.FullName -Recurse -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum
+            $sizeMB = [math]::Round($size / 1MB, 1)
+            Write-Host "$($_.Name): ${sizeMB} MB"
+          }
+
+      - name: Build Tauri
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: 'Omnimind Explorer ${{ github.ref_name }}'
+          releaseBody: |
+            Self-contained native app bundles. No Node.js installation required.
+
+            ### Installation
+            - **macOS**: Download the `.dmg` for your chip (Apple Silicon = `aarch64`, Intel = `x86_64`), open it, and drag the app to Applications.
+            - **Windows**: Download the `.msi` installer and run it.
+            - **Linux**: Download the `.AppImage` (portable) or `.deb` (Debian/Ubuntu).
+
+            On first launch, the app creates its data directory and initializes the database automatically.
+          releaseDraft: ${{ inputs.draft || 'true' }}
+          prerelease: false
+          args: ${{ matrix.args }}

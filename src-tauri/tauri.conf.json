@@ -53,6 +53,9 @@
     ],
     "category": "DeveloperTool",
     "shortDescription": "Visual memory explorer for Omnimind",
-    "longDescription": "A GUI that lets you see, explore, and manage your Omnimind memory visually."
+    "longDescription": "A GUI that lets you see, explore, and manage your Omnimind memory visually.",
+    "resources": {
+      "resources": ""
+    }
   }
 }

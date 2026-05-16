@@ -4,7 +4,29 @@
  * Talks to the Node.js sidecar server.
  */
 
-const BASE_URL = 'http://localhost:8844';
+import { invoke } from '@tauri-apps/api/core';
+
+let baseUrlPromise: Promise<string> | null = null;
+
+async function getBaseUrl(): Promise<string> {
+  if (baseUrlPromise) return baseUrlPromise;
+
+  baseUrlPromise = (async () => {
+    // Try Tauri invoke first (bundled app)
+    if (typeof window !== 'undefined' && (window as any).__TAURI__) {
+      try {
+        const url = await invoke<string>('get_api_base');
+        if (url) return url;
+      } catch {
+        // fall through
+      }
+    }
+    // Fallback for dev mode or standalone browser
+    return 'http://localhost:8844';
+  })();
+
+  return baseUrlPromise;
+}
 
 export interface Memory {
   id: string;
@@ -17,6 +39,7 @@ export interface Memory {
   accessCount: number;
   pinned: boolean;
   sourceTool: string;
+  sourceId: string | null;
 }
 
 export interface SearchResult {
@@ -101,7 +124,8 @@ export interface SystemStats {
 }
 
 async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${BASE_URL}${path}`, init);
+  const base = await getBaseUrl();
+  const res = await fetch(`${base}${path}`, init);
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }));
     throw new Error(err.error || `HTTP ${res.status}`);
@@ -146,6 +170,13 @@ export const api = {
 
   deleteMemory: (id: string) =>
     fetch(`/api/memories/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+
+  updateMemory: (id: string, updates: Partial<Pick<Memory, 'content' | 'wing' | 'room' | 'pinned'>>) =>
+    fetchJson<{ memory: Memory }>(`/api/memories/${encodeURIComponent(id)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(updates),
+    }),
 
   predictions: () => fetchJson<{ predictions: Prediction[] }>('/api/predictions'),
 
@@ -250,4 +281,6 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ minFrequency }),
     }),
+
+  conflicts: () => fetchJson<{ conflicts: Array<{ resolution: string; winningEvent: { sourceTool: string; payload: { wing?: string; content?: string } }; losingEvent: { sourceTool: string; payload: { wing?: string; content?: string } }; explanation: string }> }>('/api/bus/conflicts'),
 };
