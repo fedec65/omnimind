@@ -15,6 +15,9 @@ on:
           - 'true'
           - 'false'
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
 jobs:
   build-tauri:
     permissions:
@@ -47,20 +50,22 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: 'npm'
 
-      - name: Setup Rust target
-        run: rustup target add ${{ matrix.target }}
+      - name: Setup Rust
+        run: |
+          rustup default stable
+          rustup target add ${{ matrix.target }}
 
-      - name: Install dependencies (Ubuntu only)
+      - name: Install system dependencies (Ubuntu only)
         if: matrix.platform == 'ubuntu-22.04'
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
 
-      - name: Install npm dependencies
-        run: npm ci --omit=dev
+      - name: Install npm dependencies (dev + prod)
+        run: npm ci
 
       - name: Download embedding model
         run: node scripts/download-model.js
@@ -68,47 +73,51 @@ jobs:
       - name: Build TypeScript
         run: npm run build
 
+      - name: Reinstall production dependencies only
+        run: |
+          rm -rf node_modules
+          npm ci --omit=dev
+
       - name: Prepare resources (Unix)
         if: matrix.platform != 'windows-latest'
         run: |
+          set -x
           chmod +x scripts/prepare-resources.sh
-          ./scripts/prepare-resources.sh ${{ matrix.node_platform }}
+          bash scripts/prepare-resources.sh ${{ matrix.node_platform }}
 
       - name: Prepare resources (Windows)
         if: matrix.platform == 'windows-latest'
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
           $NODE_VERSION = "20.19.0"
           $PLATFORM = "${{ matrix.node_platform }}"
           $RESOURCES = "src-tauri/resources"
           $NODE_URL = "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-win-x64.zip"
 
-          Remove-Item -Recurse -Force $RESOURCES -ErrorAction SilentlyContinue
+          if (Test-Path $RESOURCES) {
+            Remove-Item -Recurse -Force $RESOURCES
+          }
           New-Item -ItemType Directory -Path $RESOURCES -Force | Out-Null
 
-          # Download Node.js
           Write-Host "Downloading Node.js for Windows"
-          Invoke-WebRequest -Uri $NODE_URL -OutFile "$env:TEMP\node-win.zip"
+          Invoke-WebRequest -Uri $NODE_URL -OutFile "$env:TEMP\node-win.zip" -UseBasicParsing
           Expand-Archive -Path "$env:TEMP\node-win.zip" -DestinationPath "$env:TEMP\node-extract" -Force
           Copy-Item -Recurse "$env:TEMP\node-extract\node-v${NODE_VERSION}-win-x64\*" "$RESOURCES\node\" -Force
 
-          # Copy backend
           Copy-Item -Recurse dist "$RESOURCES\dist" -Force
           Copy-Item -Recurse node_modules "$RESOURCES\node_modules" -Force
 
-          # Copy model cache
           $CACHE_SRC = "node_modules\@xenova\transformers\.cache"
           if (Test-Path $CACHE_SRC) {
             New-Item -ItemType Directory -Path "$RESOURCES\.cache" -Force | Out-Null
             Copy-Item -Recurse "$CACHE_SRC\*" "$RESOURCES\.cache\" -Force
           }
 
-          # Prune
           Set-Location $RESOURCES
           node ..\..\scripts\prune-for-bundle.js win32
           Set-Location ..\..
 
-          # Size report
           Write-Host "Resource sizes:"
           Get-ChildItem $RESOURCES | ForEach-Object {
             $size = (Get-ChildItem $_.FullName -Recurse -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum
