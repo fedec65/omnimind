@@ -1,7 +1,7 @@
 import type { SearchResult, SystemStats, Prediction } from './api.js';
 
 export const appState = $state({
-  activeTab: 'search' as 'search' | 'timeline' | 'spatial' | 'graph' | 'archive' | 'settings',
+  activeTab: 'search' as 'search' | 'timeline' | 'spatial' | 'graph' | 'predictions' | 'conflicts' | 'archive' | 'settings',
   searchQuery: '',
   searchResults: [] as SearchResult[],
   isSearching: false,

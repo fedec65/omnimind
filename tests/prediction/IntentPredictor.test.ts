@@ -192,4 +192,73 @@ describe('IntentPredictor', () => {
       expect(fp1.projectHash).not.toBe(fp2.projectHash);
     });
   });
+
+  describe('similarity indexes', () => {
+    it('should predict from similar project contexts', async () => {
+      const predictor = new IntentPredictor({ confidenceThreshold: 0.1, minFrequency: 1 });
+
+      const fpA = buildFingerprint({
+        projectPath: '/home/user/project-alpha',
+        gitBranch: 'main',
+        currentFile: 'src/index.ts',
+        recentTools: [],
+        recentWings: ['alpha'],
+        recentRooms: ['auth'],
+      });
+
+      const fpB = buildFingerprint({
+        projectPath: '/home/user/project-alpha',
+        gitBranch: 'feature/auth',
+        currentFile: 'src/auth.ts',
+        recentTools: [],
+        recentWings: ['alpha'],
+        recentRooms: ['auth'],
+      });
+
+      // Record access in context A
+      predictor.recordAccess(fpA, 'mem-auth');
+
+      // Predict in similar context B (same project, same wing, same room)
+      const result = await predictor.predict(fpB, async (id) =>
+        id === 'mem-auth' ? makeMemory(id) : null,
+      );
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value.length).toBeGreaterThan(0);
+      expect(result.value[0]!.memoryId).toBe('mem-auth');
+    });
+
+    it('should not predict from unrelated contexts', async () => {
+      const predictor = new IntentPredictor({ confidenceThreshold: 0.1, minFrequency: 1 });
+
+      const fpA = buildFingerprint({
+        projectPath: '/home/user/project-alpha',
+        gitBranch: 'main',
+        currentFile: 'src/index.ts',
+        recentTools: [],
+        recentWings: ['alpha'],
+        recentRooms: ['auth'],
+      });
+
+      const fpB = buildFingerprint({
+        projectPath: '/home/user/project-beta',
+        gitBranch: 'main',
+        currentFile: 'src/index.ts',
+        recentTools: [],
+        recentWings: ['beta'],
+        recentRooms: ['ui'],
+      });
+
+      predictor.recordAccess(fpA, 'mem-auth');
+
+      const result = await predictor.predict(fpB, async (id) =>
+        id === 'mem-auth' ? makeMemory(id) : null,
+      );
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value.length).toBe(0);
+    });
+  });
 });

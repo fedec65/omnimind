@@ -33,6 +33,7 @@ import { MemoryStore } from '../core/MemoryStore.js';
 import { IntentPredictor, buildFingerprint } from '../prediction/IntentPredictor.js';
 import { MemoryBus } from '../bus/MemoryBus.js';
 import { ClaudeAdapter } from '../bus/adapters/ClaudeAdapter.js';
+import { ClaudeDesktopAdapter } from '../bus/adapters/ClaudeDesktopAdapter.js';
 import { CursorAdapter } from '../bus/adapters/CursorAdapter.js';
 import { ChatGPTAdapter } from '../bus/adapters/ChatGPTAdapter.js';
 import { EventType } from '../bus/types.js';
@@ -146,6 +147,12 @@ export class OmnimindMcpServer {
     const chatgptResult = await this.bus.registerAdapter(chatgptAdapter);
     if (!chatgptResult.ok) {
       console.error(`[Omnimind MCP] ChatGPT adapter failed: ${chatgptResult.error.message}`);
+    }
+
+    const claudeDesktopAdapter = new ClaudeDesktopAdapter(this.bus, { processExistingOnConnect: true });
+    const claudeDesktopResult = await this.bus.registerAdapter(claudeDesktopAdapter);
+    if (!claudeDesktopResult.ok) {
+      console.error(`[Omnimind MCP] Claude Desktop adapter failed: ${claudeDesktopResult.error.message}`);
     }
 
     this.initialized = true;
@@ -402,8 +409,8 @@ export class OmnimindMcpServer {
       if (uri === 'omnimind://context/predictions') {
         const fingerprint = buildFingerprint({
           projectPath: process.cwd(),
-          gitBranch: 'unknown',
-          currentFile: 'unknown',
+          gitBranch: process.env.GIT_BRANCH ?? 'unknown',
+          currentFile: process.env.CURRENT_FILE ?? 'unknown',
           recentTools: [],
           recentWings: [],
           recentRooms: [],
@@ -466,16 +473,34 @@ export class OmnimindMcpServer {
         {
           name: 'memory-aware',
           description: 'System prompt with injected memory predictions',
+          arguments: [
+            {
+              name: 'projectPath',
+              description: 'Current project directory',
+              required: false,
+            },
+            {
+              name: 'gitBranch',
+              description: 'Current git branch',
+              required: false,
+            },
+            {
+              name: 'currentFile',
+              description: 'Currently open file',
+              required: false,
+            },
+          ],
         },
       ],
     }));
 
     this.server.setRequestHandler(GetPromptRequestSchema, async (request) => {
       if (request.params.name === 'memory-aware') {
+        const args = request.params.arguments ?? {};
         const fingerprint = buildFingerprint({
-          projectPath: process.cwd(),
-          gitBranch: 'unknown',
-          currentFile: 'unknown',
+          projectPath: (args.projectPath as string) ?? process.cwd(),
+          gitBranch: (args.gitBranch as string) ?? 'unknown',
+          currentFile: (args.currentFile as string) ?? 'unknown',
           recentTools: [],
           recentWings: [],
           recentRooms: [],

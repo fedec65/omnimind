@@ -45,6 +45,7 @@ import { ActivityTracker } from './prediction/ActivityTracker.js';
 import { ContextInjector } from './prediction/ContextInjector.js';
 import { MemoryBus } from './bus/MemoryBus.js';
 import { ClaudeAdapter } from './bus/adapters/ClaudeAdapter.js';
+import { ClaudeDesktopAdapter } from './bus/adapters/ClaudeDesktopAdapter.js';
 import { CursorAdapter } from './bus/adapters/CursorAdapter.js';
 import { ChatGPTAdapter } from './bus/adapters/ChatGPTAdapter.js';
 import { type MemoryEvent, type ConflictResolution, type SubscribeInput, type SyncInput } from './bus/types.js';
@@ -163,6 +164,12 @@ export class Omnimind {
       const chatgptResult = await bus.registerAdapter(chatgptAdapter);
       if (!chatgptResult.ok) {
         console.error(`[Omnimind] ChatGPT adapter failed: ${chatgptResult.error.message}`);
+      }
+
+      const claudeDesktopAdapter = new ClaudeDesktopAdapter(bus, { processExistingOnConnect: true });
+      const claudeDesktopResult = await bus.registerAdapter(claudeDesktopAdapter);
+      if (!claudeDesktopResult.ok) {
+        console.error(`[Omnimind] Claude Desktop adapter failed: ${claudeDesktopResult.error.message}`);
       }
     }
 

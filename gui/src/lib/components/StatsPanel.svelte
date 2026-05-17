@@ -40,6 +40,12 @@
       <span class="font-medium">{appState.stats.predictor.totalPatterns}</span>
     </div>
   {/if}
+  {#if appState.stats?.store && appState.stats.store.avgRetrievalLatencyMs > 0}
+    <div class="flex justify-between">
+      <span class="text-[var(--text-muted)]">Latency</span>
+      <span class="font-medium">{appState.stats.store.avgRetrievalLatencyMs.toFixed(1)} ms</span>
+    </div>
+  {/if}
   {#if appState.stats?.bus}
     <div class="flex justify-between">
       <span class="text-[var(--text-muted)]">Bus Events</span>

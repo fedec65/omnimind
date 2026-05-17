@@ -68,7 +68,7 @@ Goal: One memory for Claude, ChatGPT, Cursor, and any MCP-compatible tool.
 
 ### Remaining
 - [ ] Cross-device sync protocol (encrypted P2P)
-- [ ] Sync conflict UI indicators
+- [x] Sync conflict UI indicators
 - [ ] Memory merge strategies UI (automatic + manual)
 
 ### Deliverable
@@ -92,10 +92,10 @@ Goal: A GUI that lets you see, explore, and manage your memory.
 - [x] Settings panel — theme, auto-start, configuration
 
 ### Remaining
-- [ ] Drag-and-drop card repositioning in spatial map
-- [ ] Connection lines between related memories in spatial map
-- [ ] Manual memory editing (double-click to edit)
-- [ ] Real-time predictions panel in GUI
+- [x] Drag-and-drop card repositioning in spatial map
+- [x] Connection lines between related memories in spatial map
+- [x] Manual memory editing (double-click to edit)
+- [x] Real-time predictions panel in GUI
 
 ### Deliverable
 Cross-platform desktop app (macOS primary, Linux/Windows via Tauri).
@@ -121,11 +121,11 @@ Goal: Seamless integration with any MCP-compatible AI tool.
 - [x] Context injection endpoint (`/api/context`)
 
 ### Remaining
-- [ ] Multi-agent memory isolation (each agent gets its own namespace/wing prefix)
-- [ ] Memory-aware context compression (truncate while preserving Omnimind context)
-- [ ] Prompt templates (memory-aware system prompts)
-- [ ] Resource exposure (memory as readable MCP resources)
-- [ ] Published npm package with `npx omnimind` one-liner setup
+- [x] Multi-agent memory isolation (each agent gets its own namespace/wing prefix)
+- [x] Memory-aware context compression (truncate while preserving Omnimind context)
+- [x] Prompt templates (memory-aware system prompts)
+- [x] Resource exposure (memory as readable MCP resources)
+- [x] Published npm package with `npx omnimind` one-liner setup
 
 ---
 
@@ -156,7 +156,7 @@ Goal: Seamless integration with any MCP-compatible AI tool.
 |--------|---------|---------------|---------|
 | Retrieval R@5 | **94%** | >= 97% | >= 98% |
 | Retrieval latency | **< 20ms** | < 15ms | < 10ms |
-| Prediction accuracy | **73.9%** top-1 | >= 75% | >= 85% |
+| Prediction accuracy | **82.6%** top-1 | >= 75% | >= 85% |
 | Wake-up tokens | **< 150** | < 150 | < 100 |
 | Storage growth | Linear | Sub-linear | Sub-linear |
 | Tools supported | **3** (Claude, Cursor, ChatGPT) | 3+ | 5+ |

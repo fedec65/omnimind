@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { api } from '../api';
-  import type { Memory } from '../api';
+  import type { Memory, Relation } from '../api';
   import * as d3 from 'd3';
 
   let svgEl: SVGSVGElement;
@@ -11,14 +11,20 @@
   let selectedMemory = $state<Memory | null>(null);
 
   let memories = $state<Memory[]>([]);
+  let relations = $state<Relation[]>([]);
+  let dragOffsets = $state<Map<string, { dx: number; dy: number }>>(new Map());
 
   const layerColors = ['#3b82f6', '#10b981', '#8b5cf6', '#f59e0b'];
   const layerNames = ['Verbatim', 'Compressed', 'Concept', 'Wisdom'];
 
   onMount(async () => {
     try {
-      const data = await api.memories(undefined, 200);
-      memories = data.memories.map((r: any) => r.memory);
+      const [memData, relData] = await Promise.all([
+        api.memories(undefined, 200),
+        api.relations({ limit: 500 }),
+      ]);
+      memories = memData.memories.map((r: any) => r.memory);
+      relations = relData.relations;
       renderMap();
     } catch (e) {
       error = e instanceof Error ? e.message : 'Failed to load map';
@@ -26,6 +32,42 @@
       isLoading = false;
     }
   });
+
+  function getBasePosition(mem: Memory) {
+    const wingMap = new Map<string, Map<string, Memory[]>>();
+    for (const m of memories) {
+      if (!wingMap.has(m.wing)) wingMap.set(m.wing, new Map());
+      const roomMap = wingMap.get(m.wing)!;
+      if (!roomMap.has(m.room)) roomMap.set(m.room, []);
+      roomMap.get(m.room)!.push(m);
+    }
+
+    const wings = Array.from(wingMap.entries());
+    const wingSpacing = 320;
+    const roomSpacing = 160;
+    const roomSize = 140;
+    const margin = 60;
+
+    const wingIdx = wings.findIndex(([w]) => w === mem.wing);
+    const wingX = margin + (wingIdx >= 0 ? wingIdx : 0) * wingSpacing;
+    const wingY = margin;
+
+    const rooms = wingIdx >= 0 ? Array.from(wings[wingIdx]![1].entries()) : [];
+    const roomIdx = rooms.findIndex(([r]) => r === mem.room);
+    const rx = wingX;
+    const ry = wingY + (roomIdx >= 0 ? roomIdx : 0) * roomSpacing;
+
+    const roomMemories = roomIdx >= 0 ? rooms[roomIdx]![1] : [];
+    const memIdx = roomMemories.findIndex((m) => m.id === mem.id);
+    const cols = 4;
+    const col = memIdx >= 0 ? memIdx % cols : 0;
+    const row = memIdx >= 0 ? Math.floor(memIdx / cols) : 0;
+
+    return {
+      cx: rx + 20 + col * 28,
+      cy: ry + 32 + row * 24,
+    };
+  }
 
   function renderMap() {
     if (!svgEl || memories.length === 0) return;
@@ -104,34 +146,101 @@
           .attr('font-size', '10px')
           .attr('fill', '#7a7a8a')
           .text(roomName);
-
-        // Memory dots
-        const cols = 4;
-        roomMemories.forEach((mem, idx) => {
-          const col = idx % cols;
-          const row = Math.floor(idx / cols);
-          const cx = rx + 20 + col * 28;
-          const cy = ry + 32 + row * 24;
-
-          const radius = 6 + Math.min(mem.accessCount * 0.5, 6);
-
-          g.append('circle')
-            .attr('cx', cx)
-            .attr('cy', cy)
-            .attr('r', radius)
-            .attr('fill', layerColors[mem.layer] || '#6b7280')
-            .attr('stroke', mem.pinned ? '#f59e0b' : 'none')
-            .attr('stroke-width', mem.pinned ? 2 : 0)
-            .attr('opacity', 0.85)
-            .attr('cursor', 'pointer')
-            .on('click', () => {
-              selectedMemory = mem;
-            })
-            .append('title')
-            .text(`${mem.content.substring(0, 80)}${mem.content.length > 80 ? '...' : ''}`);
-        });
       });
     });
+
+    // Build memory positions
+    const posMap = new Map<string, { cx: number; cy: number }>();
+    for (const mem of memories) {
+      posMap.set(mem.id, getBasePosition(mem));
+    }
+
+    // Apply drag offsets
+    for (const [id, offset] of dragOffsets) {
+      const pos = posMap.get(id);
+      if (pos) {
+        pos.cx += offset.dx;
+        pos.cy += offset.dy;
+      }
+    }
+
+    // Draw connection lines between related memories (same sourceId)
+    const sourceGroups = new Map<string, string[]>();
+    for (const mem of memories) {
+      if (mem.sourceId) {
+        if (!sourceGroups.has(mem.sourceId)) sourceGroups.set(mem.sourceId, []);
+        sourceGroups.get(mem.sourceId)!.push(mem.id);
+      }
+    }
+
+    const linkGroup = g.append('g').attr('class', 'links');
+    for (const [, ids] of sourceGroups) {
+      if (ids.length < 2) continue;
+      for (let i = 0; i < ids.length - 1; i++) {
+        const a = posMap.get(ids[i]!);
+        const b = posMap.get(ids[i + 1]!);
+        if (a && b) {
+          linkGroup.append('line')
+            .attr('x1', a.cx)
+            .attr('y1', a.cy)
+            .attr('x2', b.cx)
+            .attr('y2', b.cy)
+            .attr('stroke', '#2a2a35')
+            .attr('stroke-width', 1)
+            .attr('stroke-dasharray', '3,3')
+            .attr('opacity', 0.5);
+        }
+      }
+    }
+
+    // Draw memory dots
+    const dotGroup = g.append('g').attr('class', 'dots');
+    const cols = 4;
+
+    for (const mem of memories) {
+      const pos = posMap.get(mem.id);
+      if (!pos) continue;
+      const radius = 6 + Math.min(mem.accessCount * 0.5, 6);
+      const offset = dragOffsets.get(mem.id);
+
+      const circle = dotGroup.append('circle')
+        .attr('cx', pos.cx)
+        .attr('cy', pos.cy)
+        .attr('r', radius)
+        .attr('fill', layerColors[mem.layer] || '#6b7280')
+        .attr('stroke', mem.pinned ? '#f59e0b' : 'none')
+        .attr('stroke-width', mem.pinned ? 2 : 0)
+        .attr('opacity', 0.85)
+        .attr('cursor', 'pointer')
+        .on('click', () => {
+          selectedMemory = mem;
+        });
+
+      circle.append('title')
+        .text(`${mem.content.substring(0, 80)}${mem.content.length > 80 ? '...' : ''}`);
+
+      // Drag behavior
+      const drag = d3.drag<SVGCircleElement, unknown>()
+        .on('start', function () {
+          d3.select(this).attr('stroke', '#fff').attr('stroke-width', 2);
+        })
+        .on('drag', function (event) {
+          const currentOffset = dragOffsets.get(mem.id) ?? { dx: 0, dy: 0 };
+          const newOffset = { dx: currentOffset.dx + event.dx, dy: currentOffset.dy + event.dy };
+          dragOffsets = new Map(dragOffsets);
+          dragOffsets.set(mem.id, newOffset);
+          d3.select(this)
+            .attr('cx', pos.cx + newOffset.dx)
+            .attr('cy', pos.cy + newOffset.dy);
+        })
+        .on('end', function () {
+          d3.select(this)
+            .attr('stroke', mem.pinned ? '#f59e0b' : 'none')
+            .attr('stroke-width', mem.pinned ? 2 : 0);
+        });
+
+      circle.call(drag as any);
+    }
 
     // Center the content initially
     const totalWidth = wings.length * wingSpacing;
@@ -208,6 +317,9 @@
         </div>
         {#if selectedMemory.pinned}
           <div class="text-amber-400 text-xs">📌 Pinned</div>
+        {/if}
+        {#if selectedMemory.sourceId}
+          <div class="text-[var(--text-muted)] text-xs">Session: {selectedMemory.sourceId.substring(0, 8)}</div>
         {/if}
       </div>
     </aside>

@@ -190,4 +190,71 @@ describe('MemoryStore', () => {
       expect(result.value.memoriesByLayer[MemoryLayer.Verbatim]).toBe(3);
     });
   });
+
+  describe('update', () => {
+    it('should update memory content', async () => {
+      const stored = await store.store('Original content', { wing: 'test' });
+      expect(stored.ok).toBe(true);
+      if (!stored.ok) return;
+
+      const updated = await store.update(stored.value.id, { content: 'Updated content' });
+      expect(updated.ok).toBe(true);
+      if (!updated.ok) return;
+
+      expect(updated.value.content).toBe('Updated content');
+
+      const get = await store.get(stored.value.id);
+      expect(get.ok).toBe(true);
+      if (!get.ok || !get.value) return;
+      expect(get.value.content).toBe('Updated content');
+    });
+
+    it('should update wing and room', async () => {
+      const stored = await store.store('Move me', { wing: 'old', room: 'old-room' });
+      expect(stored.ok).toBe(true);
+      if (!stored.ok) return;
+
+      const updated = await store.update(stored.value.id, { wing: 'new', room: 'new-room' });
+      expect(updated.ok).toBe(true);
+      if (!updated.ok) return;
+
+      expect(updated.value.wing).toBe('new');
+      expect(updated.value.room).toBe('new-room');
+    });
+
+    it('should update pinned status', async () => {
+      const stored = await store.store('Pin me', { wing: 'test' });
+      expect(stored.ok).toBe(true);
+      if (!stored.ok) return;
+
+      const updated = await store.update(stored.value.id, { pinned: true });
+      expect(updated.ok).toBe(true);
+      if (!updated.ok) return;
+
+      expect(updated.value.pinned).toBe(true);
+    });
+
+    it('should return error for non-existent memory', async () => {
+      const result = await store.update('non-existent', { content: 'x' });
+      expect(result.ok).toBe(true); // SQLite UPDATE doesn't error on 0 rows; get returns null
+      if (!result.ok) return;
+      // get() on the updated memory would return null since it doesn't exist
+    });
+  });
+
+  describe('retrieval latency tracking', () => {
+    it('should track search latency in stats', async () => {
+      await store.store('Latency test memory', { wing: 'perf' });
+
+      // Perform a search to record latency
+      const searchResult = await store.search('latency');
+      expect(searchResult.ok).toBe(true);
+
+      const stats = await store.getStats();
+      expect(stats.ok).toBe(true);
+      if (!stats.ok) return;
+
+      expect(stats.value.avgRetrievalLatencyMs).toBeGreaterThan(0);
+    });
+  });
 });

@@ -226,6 +226,7 @@ export class MemoryStore {
   private crypto: CryptoEngine | null = null;
   private readonly config: MemoryStoreConfig;
   private initialized = false;
+  private retrievalLatencies: number[] = [];
 
   // Prepared statements (reused for performance)
   private stmtInsert!: Database.Statement;
@@ -710,7 +711,7 @@ export class MemoryStore {
           whereClause,
           params,
         );
-        fused = this.fuseResults(vectorResults, keywordResults).slice(0, limit);
+        fused = this.fuseResults(vectorResults, keywordResults, query).slice(0, limit);
       }
 
       // Graph search — augment with memories linked to matching entities
@@ -745,6 +746,10 @@ export class MemoryStore {
       this.logActivity('memory_search', null, query);
 
       const latency = performance.now() - startTime;
+      this.retrievalLatencies.push(latency);
+      if (this.retrievalLatencies.length > 100) {
+        this.retrievalLatencies.shift();
+      }
       if (latency > 50) {
         console.warn(`[MemoryStore] Slow search: ${latency.toFixed(1)}ms for "${query.substring(0, 50)}"`);
       }
@@ -941,7 +946,9 @@ export class MemoryStore {
         totalEntities: entityRow.count,
         totalRelations: relationRow.count,
         databaseSizeBytes: sizeRow.size,
-        avgRetrievalLatencyMs: 0, // TODO: track moving average
+        avgRetrievalLatencyMs: this.retrievalLatencies.length > 0
+          ? this.retrievalLatencies.reduce((a, b) => a + b, 0) / this.retrievalLatencies.length
+          : 0,
       };
 
       return ok(stats);
@@ -1769,15 +1776,20 @@ export class MemoryStore {
   private fuseResults(
     vectorResults: SearchResult[],
     keywordResults: SearchResult[],
+    query: string,
   ): SearchResult[] {
     const scores = new Map<string, { memory: Memory; vScore: number; kScore: number }>();
+
+    // Adaptive hybrid alpha based on query length
+    const wordCount = query.split(/\s+/).filter(w => w.length > 0).length;
+    const alpha = wordCount <= 2 ? 0.5 : wordCount >= 6 ? 0.85 : DefaultSearchConfig.hybridAlpha;
 
     // Vector scores (alpha weight)
     const vMax = Math.max(...vectorResults.map(r => r.score), 1);
     for (const r of vectorResults) {
       scores.set(r.memory.id, {
         memory: r.memory,
-        vScore: (DefaultSearchConfig.hybridAlpha * r.score) / vMax,
+        vScore: (alpha * r.score) / vMax,
         kScore: 0,
       });
     }
@@ -1787,12 +1799,12 @@ export class MemoryStore {
     for (const r of keywordResults) {
       const existing = scores.get(r.memory.id);
       if (existing) {
-        existing.kScore = ((1 - DefaultSearchConfig.hybridAlpha) * r.score) / kMax;
+        existing.kScore = ((1 - alpha) * r.score) / kMax;
       } else {
         scores.set(r.memory.id, {
           memory: r.memory,
           vScore: 0,
-          kScore: ((1 - DefaultSearchConfig.hybridAlpha) * r.score) / kMax,
+          kScore: ((1 - alpha) * r.score) / kMax,
         });
       }
     }

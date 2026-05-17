@@ -73,6 +73,11 @@ export class IntentPredictor {
   private patterns: Map<string, ActivityPattern[]> = new Map();
   private store: PatternStore | null = null;
 
+  // Index for fast similarity lookups
+  private projectIndex: Map<string, Set<string>> = new Map();
+  private wingIndex: Map<string, Set<string>> = new Map();
+  private roomIndex: Map<string, Set<string>> = new Map();
+
   constructor(config: IntentPredictorConfig = {}) {
     this.config = {
       confidenceThreshold: config.confidenceThreshold ?? DefaultSearchConfig.predictionThreshold,
@@ -123,6 +128,7 @@ export class IntentPredictor {
    */
   recordAccess(fingerprint: ContextFingerprint, memoryId: string): void {
     const signature = this.buildSignature(fingerprint);
+    this.indexSignature(signature, fingerprint);
     const existing = this.patterns.get(signature) ?? [];
 
     const idx = existing.findIndex(p => p.memoryId === memoryId);
@@ -265,9 +271,36 @@ export class IntentPredictor {
    * We intentionally drop some detail to enable fuzzy matching.
    */
   private buildSignature(fp: ContextFingerprint): string {
-    // Use project, branch, file type, wings, and tools for a richer context signature
-    const key = `${fp.projectHash}:${fp.branchHash}:${fp.fileExtension}:${fp.recentWings.join(',')}:${fp.recentTools.join(',')}`;
+    // Use project, branch, file type, wings, rooms, tools, and time bucket for a richer context signature
+    const timeBucket = this.timeBucket(fp.timeOfDay);
+    const key = `${fp.projectHash}:${fp.branchHash}:${fp.fileExtension}:${fp.recentWings.join(',')}:${fp.recentRooms.join(',')}:${fp.recentTools.join(',')}:${timeBucket}`;
     return createHash('sha256').update(key).digest('hex').substring(0, 16);
+  }
+
+  private timeBucket(hour: number): string {
+    if (hour < 6) return 'night';
+    if (hour < 12) return 'morning';
+    if (hour < 18) return 'afternoon';
+    return 'evening';
+  }
+
+  /** Index a signature by its component keys for fast similarity lookup */
+  private indexSignature(signature: string, fp: ContextFingerprint): void {
+    const projSet = this.projectIndex.get(fp.projectHash) ?? new Set();
+    projSet.add(signature);
+    this.projectIndex.set(fp.projectHash, projSet);
+
+    for (const wing of fp.recentWings) {
+      const wingSet = this.wingIndex.get(wing) ?? new Set();
+      wingSet.add(signature);
+      this.wingIndex.set(wing, wingSet);
+    }
+
+    for (const room of fp.recentRooms) {
+      const roomSet = this.roomIndex.get(room) ?? new Set();
+      roomSet.add(signature);
+      this.roomIndex.set(room, roomSet);
+    }
   }
 
   /**
@@ -288,19 +321,49 @@ export class IntentPredictor {
     // Exact match
     const exact = this.patterns.get(_signature) ?? [];
 
-    // Similar contexts (same project or wing)
+    // Similar contexts using indexes
+    const similarSigs = new Set<string>();
+
+    // Same project
+    const projSigs = this.projectIndex.get(_fingerprint.projectHash);
+    if (projSigs) {
+      for (const sig of projSigs) {
+        if (sig !== _signature) similarSigs.add(sig);
+      }
+    }
+
+    // Same wing
+    for (const wing of _fingerprint.recentWings) {
+      const wingSigs = this.wingIndex.get(wing);
+      if (wingSigs) {
+        for (const sig of wingSigs) {
+          if (sig !== _signature) similarSigs.add(sig);
+        }
+      }
+    }
+
+    // Same room
+    for (const room of _fingerprint.recentRooms) {
+      const roomSigs = this.roomIndex.get(room);
+      if (roomSigs) {
+        for (const sig of roomSigs) {
+          if (sig !== _signature) similarSigs.add(sig);
+        }
+      }
+    }
+
     const similar: ActivityPattern[] = [];
-    for (const [sig, patterns] of this.patterns) {
-      if (sig === _signature) continue;
+    for (const sig of similarSigs) {
+      const patterns = this.patterns.get(sig);
+      if (!patterns) continue;
       for (const p of patterns) {
-        // Check if memory was accessed in this similar context
         if (now - p.lastAccessed <= windowMs && p.frequency >= this.config.minFrequency) {
           similar.push(p);
         }
       }
     }
 
-    // Combine and deduplicate by memoryId
+    // Combine and deduplicate by memoryId (keep highest frequency)
     const combined = [...exact, ...similar];
     const deduped = new Map<string, ActivityPattern>();
     for (const p of combined) {
