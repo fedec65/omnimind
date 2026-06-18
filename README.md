@@ -157,11 +157,17 @@ Keys are derived from your machine fingerprint + optional passphrase via HKDF-SH
 
 | Tool | Input | Output |
 |------|-------|--------|
-| `omnimind_search` | `query`, `limit`, `wing`, `room` | Ranked memory list |
-| `omnimind_store` | `content`, `wing`, `room`, `pin` | Stored memory ID |
+| `omnimind_search` | `query`, `limit`, `wing`, `room`, `namespace` | Ranked memory list (client-scoped) |
+| `omnimind_store` | `content`, `wing`, `room`, `pin`, `namespace` | Stored memory ID (auto-tagged with client namespace) |
 | `omnimind_predict` | `projectPath`, `gitBranch`, `currentFile` | Top-3 predictions |
-| `omnimind_status` | — | Stats, health, layer counts |
+| `omnimind_status` | — | Stats, health, layer counts, bound namespace |
 | `omnimind_subscribe` | `wings`, `rooms`, `eventTypes` | Subscription confirmation |
+| `omnimind_compress_context` | `history`, `tokenBudget` | Compressed text + summary, preserves `<omnimind_predictions>` |
+
+**Multi-agent isolation:** each connected MCP client is bound to its own namespace derived from the `clientInfo` sent in the initialize handshake. Claude Code and Cursor running in parallel cannot see each other's memories via `omnimind_search` without an explicit `namespace` override.
+
+**Memory-aware context compression:** `omnimind_compress_context` truncates a long chat history to a token budget while preserving every `<omnimind_predictions>` block byte-for-byte.
+
 | `omnimind_sync` | `since`, `toolId` | Missed events list |
 
 ### Resources
@@ -179,9 +185,17 @@ Keys are derived from your machine fingerprint + optional passphrase via HKDF-SH
 
 ### Connecting to Claude Code
 
-The desktop app does **not** automatically configure Claude Code or Cursor — you need to point them to the MCP server manually.
+The fastest way is the one-liner setup:
 
-Add to your Claude Code settings (`~/.claude/settings.json`):
+```bash
+npx omnimind setup-claude-code
+```
+
+This writes the MCP server entry into `~/.claude/settings.json` automatically. After running it, restart Claude Code and Omnimind tools will appear. The setup is idempotent — running it again is safe and will not clobber other MCP server entries. Override the target path via `OMNIMIND_CLAUDE_SETTINGS_PATH=/path/to/settings.json npx omnimind setup-claude-code` for non-standard layouts.
+
+#### Manual configuration
+
+If you prefer to edit the JSON yourself, add this to `~/.claude/settings.json`:
 
 ```json
 {
