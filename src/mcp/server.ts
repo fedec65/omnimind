@@ -20,6 +20,7 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import {
   CallToolRequestSchema,
+  InitializeRequestSchema,
   ListToolsRequestSchema,
   ListResourcesRequestSchema,
   ReadResourceRequestSchema,
@@ -29,6 +30,7 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
+import { randomUUID } from 'crypto';
 import { MemoryStore } from '../core/MemoryStore.js';
 import { IntentPredictor, buildFingerprint } from '../prediction/IntentPredictor.js';
 import { MemoryBus } from '../bus/MemoryBus.js';
@@ -39,6 +41,7 @@ import { ChatGPTAdapter } from '../bus/adapters/ChatGPTAdapter.js';
 import { EventType } from '../bus/types.js';
 import { join } from 'path';
 import { homedir } from 'os';
+import { NamespaceRegistry } from './namespace.js';
 
 // ─── Schemas ──────────────────────────────────────────────────────
 
@@ -98,6 +101,9 @@ export class OmnimindMcpServer {
   private predictor: IntentPredictor;
   private bus: MemoryBus;
   private initialized = false;
+  private clientNamespace: string = 'default';
+  private instanceId: string = randomUUID();
+  private static registry = new NamespaceRegistry();
 
   constructor() {
     const dbPath = join(homedir(), '.omnimind', 'memory.db');
@@ -170,6 +176,22 @@ export class OmnimindMcpServer {
   }
 
   private setupHandlers(): void {
+    // Bind client identity -> namespace from the initialize handshake.
+    // Per MCP spec this is the first request on a connection; the binding
+    // is then stable for the rest of the connection's lifetime.
+    this.server.setRequestHandler(InitializeRequestSchema, async (request) => {
+      const info = request.params.clientInfo;
+      this.clientNamespace = OmnimindMcpServer.registry.register(this.instanceId, info);
+      console.error(
+        `[Omnimind MCP] Client bound to namespace: ${this.clientNamespace} (client: ${info?.name ?? 'unknown'})`,
+      );
+      return {
+        protocolVersion: '2024-11-05',
+        capabilities: { tools: {}, resources: {}, prompts: {} },
+        serverInfo: { name: 'omnimind', version: '0.4.2' },
+      };
+    });
+
     // List available tools
     this.server.setRequestHandler(ListToolsRequestSchema, async () => ({
       tools: [
@@ -252,11 +274,18 @@ export class OmnimindMcpServer {
   private async handleSearch(args: unknown) {
     const input = SearchInput.parse(args);
 
+    // Default the read side to the auto-derived client namespace so two
+    // connected clients cannot see each other's memories. Explicit
+    // `namespace` parameter always wins. The default-client case still
+    // sees cross-namespace results (preserves current behavior).
+    const effectiveNamespace =
+      input.namespace ?? (this.clientNamespace !== 'default' ? this.clientNamespace : undefined);
+
     const searchOpts: import('../core/types.js').SearchOptions = {
       limit: input.limit,
       ...(input.wing !== undefined ? { wing: input.wing } : {}),
       ...(input.room !== undefined ? { room: input.room } : {}),
-      ...(input.namespace !== undefined ? { namespace: input.namespace } : {}),
+      ...(effectiveNamespace !== undefined ? { namespace: effectiveNamespace } : {}),
       ...(input.layer !== undefined ? { layer: input.layer as import('../core/types.js').MemoryLayerId } : {}),
     };
     const result = await this.store.search(input.query, searchOpts);
@@ -293,7 +322,7 @@ export class OmnimindMcpServer {
     const storeMeta: import('../core/types.js').MemoryMeta = { wing: input.wing };
     if (input.room !== undefined) storeMeta.room = input.room;
     if (input.sourceTool !== undefined) storeMeta.sourceTool = input.sourceTool;
-    if (input.namespace !== undefined) storeMeta.namespace = input.namespace;
+    storeMeta.namespace = input.namespace ?? this.clientNamespace;
     if (input.pin !== undefined) storeMeta.pinned = input.pin;
     const result = await this.store.store(input.content, storeMeta);
 
@@ -318,7 +347,7 @@ export class OmnimindMcpServer {
     const storeMeta: import('../core/types.js').MemoryMeta = { wing: input.wing };
     if (input.room !== undefined) storeMeta.room = input.room;
     if (input.sourceTool !== undefined) storeMeta.sourceTool = input.sourceTool;
-    if (input.namespace !== undefined) storeMeta.namespace = input.namespace;
+    storeMeta.namespace = input.namespace ?? this.clientNamespace;
     if (input.sourceId !== undefined) storeMeta.sourceId = input.sourceId;
     if (input.pin !== undefined) storeMeta.pinned = input.pin;
 
@@ -565,6 +594,8 @@ export class OmnimindMcpServer {
           text: [
             `Omnimind Status`,
             `================`,
+            `Namespace: ${this.clientNamespace}`,
+            `Instance: ${this.instanceId.substring(0, 8)}`,
             `Total memories: ${s.totalMemories}`,
             `By layer:`,
             layerInfo,
