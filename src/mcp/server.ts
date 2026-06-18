@@ -42,6 +42,7 @@ import { EventType } from '../bus/types.js';
 import { join } from 'path';
 import { homedir } from 'os';
 import { NamespaceRegistry } from './namespace.js';
+import { compressContext } from '../prediction/ContextCompressor.js';
 
 // ─── Schemas ──────────────────────────────────────────────────────
 
@@ -91,6 +92,11 @@ const SubscribeInput = z.object({
 const SyncInput = z.object({
   since: z.number().optional().describe('Unix timestamp — get events after this time'),
   toolId: z.string().optional().describe('Only sync from specific tool (e.g., "cursor")'),
+});
+
+const CompressContextInput = z.object({
+  history: z.string().describe('Chat history or context to compress'),
+  tokenBudget: z.number().min(1).max(2000).describe('Max tokens in the output'),
 });
 
 // ─── Server Implementation ────────────────────────────────────────
@@ -230,6 +236,11 @@ export class OmnimindMcpServer {
           description: 'Sync memories from other tools. Call this when starting a new session to pull missed updates.',
           inputSchema: convertZodToJsonSchema(SyncInput),
         },
+        {
+          name: 'omnimind_compress_context',
+          description: 'Compress a chat history to a token budget while preserving any <omnimind_predictions> blocks intact. Use this when the host LLM is about to truncate a long context and you want Omnimind\'s predictions to survive.',
+          inputSchema: convertZodToJsonSchema(CompressContextInput),
+        },
       ],
     }));
 
@@ -251,6 +262,8 @@ export class OmnimindMcpServer {
             return await this.handleSubscribe(request.params.arguments);
           case 'omnimind_sync':
             return await this.handleSync(request.params.arguments);
+          case 'omnimind_compress_context':
+            return await this.handleCompressContext(request.params.arguments);
           default:
             throw new Error(`Unknown tool: ${request.params.name}`);
         }
@@ -662,6 +675,28 @@ export class OmnimindMcpServer {
           type: 'text',
           text: `Synced ${events.value.length} events:\n${lines.join('\n')}`,
         },
+      ],
+    };
+  }
+
+  private async handleCompressContext(args: unknown) {
+    const input = CompressContextInput.parse(args);
+
+    const result = compressContext(input.history, { tokenBudget: input.tokenBudget });
+    if (!result.ok) {
+      throw result.error;
+    }
+
+    const r = result.value;
+    const summary =
+      `Compressed ${r.tokensBefore} -> ${r.tokensAfter} tokens ` +
+      `(kept ${r.predictionsKept} prediction block(s)` +
+      `${r.predictionsTruncated ? ', some truncated' : ''}).`;
+
+    return {
+      content: [
+        { type: 'text', text: r.text },
+        { type: 'text', text: r.warning ? `${summary}\n${r.warning}` : summary },
       ],
     };
   }
