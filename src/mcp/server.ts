@@ -41,8 +41,10 @@ import { ChatGPTAdapter } from '../bus/adapters/ChatGPTAdapter.js';
 import { EventType } from '../bus/types.js';
 import { join } from 'path';
 import { homedir } from 'os';
+import { URLSearchParams } from 'node:url';
 import { NamespaceRegistry } from './namespace.js';
 import { compressContext } from '../prediction/ContextCompressor.js';
+import { ContextInjector } from '../prediction/ContextInjector.js';
 
 // ─── Schemas ──────────────────────────────────────────────────────
 
@@ -442,13 +444,36 @@ export class OmnimindMcpServer {
           mimeType: 'application/json',
           description: 'System health and memory statistics',
         },
+        {
+          uri: 'omnimind://memories/recent',
+          name: 'Recent Memories',
+          mimeType: 'application/json',
+          description:
+            'Most recent memories in the active namespace. Append ?limit=N (default 20, max 100) and ?namespace=foo to override.',
+        },
+        {
+          uri: 'omnimind://entities/list',
+          name: 'Knowledge Graph Entities',
+          mimeType: 'application/json',
+          description: 'All entities extracted from stored memories.',
+        },
+        {
+          uri: 'omnimind://relations/list',
+          name: 'Knowledge Graph Relations',
+          mimeType: 'application/json',
+          description: 'All relations between entities (subject-predicate-object triples).',
+        },
       ],
     }));
 
-    this.server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
-      const uri = request.params.uri;
+    this.server.setRequestHandler(ReadResourceRequestSchema, async (request) =>
+      this.handleReadResource(request.params.uri),
+    );
+  }
 
-      if (uri === 'omnimind://context/predictions') {
+  /** Public-for-tests: handle a resources/read request by URI. */
+  async handleReadResource(uri: string) {
+    if (uri === 'omnimind://context/predictions') {
         const fingerprint = buildFingerprint({
           projectPath: process.cwd(),
           gitBranch: process.env.GIT_BRANCH ?? 'unknown',
@@ -505,8 +530,82 @@ export class OmnimindMcpServer {
         };
       }
 
+      if (uri.startsWith('omnimind://memories/recent')) {
+        const params = this.parseResourceQuery(uri);
+        const requestedLimit = Number(params.get('limit') ?? 20);
+        const limit = Math.max(1, Math.min(100, Number.isFinite(requestedLimit) ? requestedLimit : 20));
+        const overrideNamespace = params.get('namespace') ?? undefined;
+        const effectiveNamespace =
+          overrideNamespace ?? (this.clientNamespace !== 'default' ? this.clientNamespace : undefined);
+
+        const idsResult = this.store.getAllMemoryIds();
+        const memories: unknown[] = [];
+        if (idsResult.ok) {
+          for (const id of idsResult.value) {
+            const r = await this.store.get(id);
+            if (r.ok && r.value) {
+              if (effectiveNamespace && r.value.namespace !== effectiveNamespace) continue;
+              memories.push(r.value);
+            }
+          }
+        }
+        memories.sort((a, b) => (b as { createdAt: number }).createdAt - (a as { createdAt: number }).createdAt);
+        const slice = memories.slice(0, limit);
+
+        return {
+          contents: [
+            {
+              uri,
+              mimeType: 'application/json',
+              text: JSON.stringify(
+                {
+                  namespace: effectiveNamespace ?? 'all',
+                  count: slice.length,
+                  memories: slice,
+                },
+                null,
+                2,
+              ),
+            },
+          ],
+        };
+      }
+
+      if (uri === 'omnimind://entities/list') {
+        const entitiesResult = this.store.queryEntities({ limit: 1000 });
+        const entities = entitiesResult.ok ? entitiesResult.value : [];
+        return {
+          contents: [
+            {
+              uri,
+              mimeType: 'application/json',
+              text: JSON.stringify({ count: entities.length, entities }, null, 2),
+            },
+          ],
+        };
+      }
+
+      if (uri === 'omnimind://relations/list') {
+        const relationsResult = this.store.queryRelations({ limit: 1000 });
+        const relations = relationsResult.ok ? relationsResult.value : [];
+        return {
+          contents: [
+            {
+              uri,
+              mimeType: 'application/json',
+              text: JSON.stringify({ count: relations.length, relations }, null, 2),
+            },
+          ],
+        };
+      }
+
       throw new Error(`Unknown resource: ${uri}`);
-    });
+  }
+
+  private parseResourceQuery(uri: string): URLSearchParams {
+    const qIdx = uri.indexOf('?');
+    if (qIdx < 0) return new URLSearchParams();
+    return new URLSearchParams(uri.slice(qIdx + 1));
   }
 
   private setupPromptHandlers(): void {
@@ -533,56 +632,87 @@ export class OmnimindMcpServer {
             },
           ],
         },
+        {
+          name: 'compact-context',
+          description:
+            'Compact a long conversation history to fit a token budget while preserving <omnimind_predictions> blocks',
+          arguments: [
+            { name: 'history', description: 'Full chat history to compact', required: true },
+            {
+              name: 'tokenBudget',
+              description: 'Max tokens in the output (default 150)',
+              required: false,
+            },
+          ],
+        },
       ],
     }));
 
-    this.server.setRequestHandler(GetPromptRequestSchema, async (request) => {
-      if (request.params.name === 'memory-aware') {
-        const args = request.params.arguments ?? {};
-        const fingerprint = buildFingerprint({
-          projectPath: (args.projectPath as string) ?? process.cwd(),
-          gitBranch: (args.gitBranch as string) ?? 'unknown',
-          currentFile: (args.currentFile as string) ?? 'unknown',
-          recentTools: [],
-          recentWings: [],
-          recentRooms: [],
-        });
+    this.server.setRequestHandler(GetPromptRequestSchema, async (request) =>
+      this.handleGetPrompt(request.params.name, request.params.arguments ?? {}),
+    );
+  }
 
-        const predictions = await this.predictor.predict(fingerprint, async (id) => {
-          const result = await this.store.get(id);
-          return result.ok ? result.value : null;
-        });
+  /** Public-for-tests: handle a prompts/get request by name + args. */
+  async handleGetPrompt(name: string, args: Record<string, unknown>) {
+    if (name === 'memory-aware') {
+      const fingerprint = buildFingerprint({
+        projectPath: (args.projectPath as string) ?? process.cwd(),
+        gitBranch: (args.gitBranch as string) ?? 'unknown',
+        currentFile: (args.currentFile as string) ?? 'unknown',
+        recentTools: [],
+        recentWings: [],
+        recentRooms: [],
+      });
 
-        let injectionText = '';
-        if (predictions.ok && predictions.value.length > 0) {
-          const lines = [];
-          for (const pred of predictions.value.slice(0, 3)) {
-            const mem = await this.store.get(pred.memoryId);
-            if (mem.ok && mem.value) {
-              lines.push(`[${mem.value.wing}] ${mem.value.content.substring(0, 200)}`);
-            }
-          }
-          if (lines.length > 0) {
-            injectionText = `\n<omnimind_predictions>\n${lines.join('\n')}\n</omnimind_predictions>\n`;
-          }
-        }
+      const injector = new ContextInjector(
+        this.predictor,
+        async (id) => {
+          const r = await this.store.get(id);
+          return r.ok ? r.value : null;
+        },
+      );
+      const promptResult = await injector.getMemoryAwarePrompt(fingerprint);
+      if (!promptResult.ok) throw promptResult.error;
 
-        return {
-          description: 'Memory-aware system prompt',
-          messages: [
-            {
-              role: 'system',
-              content: {
-                type: 'text',
-                text: `You have access to the user's Omnimind memory system.${injectionText}`,
-              },
+      return {
+        description: 'Memory-aware system prompt',
+        messages: [
+          {
+            role: 'system',
+            content: { type: 'text', text: promptResult.value },
+          },
+        ],
+      };
+    }
+
+    if (name === 'compact-context') {
+      const history = (args.history as string) ?? '';
+      const tokenBudget = Number(args.tokenBudget ?? 150);
+      const result = compressContext(history, { tokenBudget });
+      if (!result.ok) throw result.error;
+      const r = result.value;
+      const summary = `Compressed ${r.tokensBefore} -> ${r.tokensAfter} tokens.`;
+
+      return {
+        description: 'Memory-aware compacted context',
+        messages: [
+          {
+            role: 'system',
+            content: {
+              type: 'text',
+              text: 'You are a helpful assistant. The following is a compacted conversation history:',
             },
-          ],
-        };
-      }
+          },
+          {
+            role: 'user',
+            content: { type: 'text', text: `${r.text}\n\n${summary}` },
+          },
+        ],
+      };
+    }
 
-      throw new Error(`Unknown prompt: ${request.params.name}`);
-    });
+    throw new Error(`Unknown prompt: ${name}`);
   }
 
   private async handleStatus() {
