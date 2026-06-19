@@ -6,6 +6,7 @@
   "types": "dist/index.d.ts",
   "files": [
     "dist/",
+    "dist/scripts/",
     "gui/dist/",
     "scripts/",
     "README.md",
@@ -14,10 +15,11 @@
   "bin": {
     "omnimind": "dist/cli.js",
     "omnimind-mcp": "dist/mcp-server.js",
-    "omnimind-server": "dist/server.js"
+    "omnimind-server": "dist/server.js",
+    "setup-claude-code": "dist/scripts/setup-claude-code.js"
   },
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && tsc -p tsconfig.scripts.json",
     "dev": "tsx watch src/index.ts",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -33,6 +35,7 @@
     "mcp": "node dist/mcp-server.js",
     "server": "node dist/server.js",
     "server:dev": "tsx watch src/server.ts",
+    "setup:claude-code": "tsx scripts/setup-claude-code.ts",
     "gui:dev": "tauri dev",
     "gui:build": "tauri build",
     "tauri": "tauri"

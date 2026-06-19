@@ -20,6 +20,7 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import {
   CallToolRequestSchema,
+  InitializeRequestSchema,
   ListToolsRequestSchema,
   ListResourcesRequestSchema,
   ReadResourceRequestSchema,
@@ -29,6 +30,7 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
+import { randomUUID } from 'crypto';
 import { MemoryStore } from '../core/MemoryStore.js';
 import { IntentPredictor, buildFingerprint } from '../prediction/IntentPredictor.js';
 import { MemoryBus } from '../bus/MemoryBus.js';
@@ -39,6 +41,10 @@ import { ChatGPTAdapter } from '../bus/adapters/ChatGPTAdapter.js';
 import { EventType } from '../bus/types.js';
 import { join } from 'path';
 import { homedir } from 'os';
+import { URLSearchParams } from 'node:url';
+import { NamespaceRegistry } from './namespace.js';
+import { compressContext } from '../prediction/ContextCompressor.js';
+import { ContextInjector } from '../prediction/ContextInjector.js';
 
 // ─── Schemas ──────────────────────────────────────────────────────
 
@@ -90,6 +96,11 @@ const SyncInput = z.object({
   toolId: z.string().optional().describe('Only sync from specific tool (e.g., "cursor")'),
 });
 
+const CompressContextInput = z.object({
+  history: z.string().describe('Chat history or context to compress'),
+  tokenBudget: z.number().min(1).max(2000).describe('Max tokens in the output'),
+});
+
 // ─── Server Implementation ────────────────────────────────────────
 
 export class OmnimindMcpServer {
@@ -98,6 +109,9 @@ export class OmnimindMcpServer {
   private predictor: IntentPredictor;
   private bus: MemoryBus;
   private initialized = false;
+  private clientNamespace: string = 'default';
+  private instanceId: string = randomUUID();
+  private static registry = new NamespaceRegistry();
 
   constructor() {
     const dbPath = join(homedir(), '.omnimind', 'memory.db');
@@ -170,6 +184,22 @@ export class OmnimindMcpServer {
   }
 
   private setupHandlers(): void {
+    // Bind client identity -> namespace from the initialize handshake.
+    // Per MCP spec this is the first request on a connection; the binding
+    // is then stable for the rest of the connection's lifetime.
+    this.server.setRequestHandler(InitializeRequestSchema, async (request) => {
+      const info = request.params.clientInfo;
+      this.clientNamespace = OmnimindMcpServer.registry.register(this.instanceId, info);
+      console.error(
+        `[Omnimind MCP] Client bound to namespace: ${this.clientNamespace} (client: ${info?.name ?? 'unknown'})`,
+      );
+      return {
+        protocolVersion: '2024-11-05',
+        capabilities: { tools: {}, resources: {}, prompts: {} },
+        serverInfo: { name: 'omnimind', version: '0.4.2' },
+      };
+    });
+
     // List available tools
     this.server.setRequestHandler(ListToolsRequestSchema, async () => ({
       tools: [
@@ -208,6 +238,11 @@ export class OmnimindMcpServer {
           description: 'Sync memories from other tools. Call this when starting a new session to pull missed updates.',
           inputSchema: convertZodToJsonSchema(SyncInput),
         },
+        {
+          name: 'omnimind_compress_context',
+          description: 'Compress a chat history to a token budget while preserving any <omnimind_predictions> blocks intact. Use this when the host LLM is about to truncate a long context and you want Omnimind\'s predictions to survive.',
+          inputSchema: convertZodToJsonSchema(CompressContextInput),
+        },
       ],
     }));
 
@@ -229,6 +264,8 @@ export class OmnimindMcpServer {
             return await this.handleSubscribe(request.params.arguments);
           case 'omnimind_sync':
             return await this.handleSync(request.params.arguments);
+          case 'omnimind_compress_context':
+            return await this.handleCompressContext(request.params.arguments);
           default:
             throw new Error(`Unknown tool: ${request.params.name}`);
         }
@@ -252,11 +289,18 @@ export class OmnimindMcpServer {
   private async handleSearch(args: unknown) {
     const input = SearchInput.parse(args);
 
+    // Default the read side to the auto-derived client namespace so two
+    // connected clients cannot see each other's memories. Explicit
+    // `namespace` parameter always wins. The default-client case still
+    // sees cross-namespace results (preserves current behavior).
+    const effectiveNamespace =
+      input.namespace ?? (this.clientNamespace !== 'default' ? this.clientNamespace : undefined);
+
     const searchOpts: import('../core/types.js').SearchOptions = {
       limit: input.limit,
       ...(input.wing !== undefined ? { wing: input.wing } : {}),
       ...(input.room !== undefined ? { room: input.room } : {}),
-      ...(input.namespace !== undefined ? { namespace: input.namespace } : {}),
+      ...(effectiveNamespace !== undefined ? { namespace: effectiveNamespace } : {}),
       ...(input.layer !== undefined ? { layer: input.layer as import('../core/types.js').MemoryLayerId } : {}),
     };
     const result = await this.store.search(input.query, searchOpts);
@@ -293,7 +337,7 @@ export class OmnimindMcpServer {
     const storeMeta: import('../core/types.js').MemoryMeta = { wing: input.wing };
     if (input.room !== undefined) storeMeta.room = input.room;
     if (input.sourceTool !== undefined) storeMeta.sourceTool = input.sourceTool;
-    if (input.namespace !== undefined) storeMeta.namespace = input.namespace;
+    storeMeta.namespace = input.namespace ?? this.clientNamespace;
     if (input.pin !== undefined) storeMeta.pinned = input.pin;
     const result = await this.store.store(input.content, storeMeta);
 
@@ -318,7 +362,7 @@ export class OmnimindMcpServer {
     const storeMeta: import('../core/types.js').MemoryMeta = { wing: input.wing };
     if (input.room !== undefined) storeMeta.room = input.room;
     if (input.sourceTool !== undefined) storeMeta.sourceTool = input.sourceTool;
-    if (input.namespace !== undefined) storeMeta.namespace = input.namespace;
+    storeMeta.namespace = input.namespace ?? this.clientNamespace;
     if (input.sourceId !== undefined) storeMeta.sourceId = input.sourceId;
     if (input.pin !== undefined) storeMeta.pinned = input.pin;
 
@@ -400,13 +444,36 @@ export class OmnimindMcpServer {
           mimeType: 'application/json',
           description: 'System health and memory statistics',
         },
+        {
+          uri: 'omnimind://memories/recent',
+          name: 'Recent Memories',
+          mimeType: 'application/json',
+          description:
+            'Most recent memories in the active namespace. Append ?limit=N (default 20, max 100) and ?namespace=foo to override.',
+        },
+        {
+          uri: 'omnimind://entities/list',
+          name: 'Knowledge Graph Entities',
+          mimeType: 'application/json',
+          description: 'All entities extracted from stored memories.',
+        },
+        {
+          uri: 'omnimind://relations/list',
+          name: 'Knowledge Graph Relations',
+          mimeType: 'application/json',
+          description: 'All relations between entities (subject-predicate-object triples).',
+        },
       ],
     }));
 
-    this.server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
-      const uri = request.params.uri;
+    this.server.setRequestHandler(ReadResourceRequestSchema, async (request) =>
+      this.handleReadResource(request.params.uri),
+    );
+  }
 
-      if (uri === 'omnimind://context/predictions') {
+  /** Public-for-tests: handle a resources/read request by URI. */
+  async handleReadResource(uri: string) {
+    if (uri === 'omnimind://context/predictions') {
         const fingerprint = buildFingerprint({
           projectPath: process.cwd(),
           gitBranch: process.env.GIT_BRANCH ?? 'unknown',
@@ -463,8 +530,82 @@ export class OmnimindMcpServer {
         };
       }
 
+      if (uri.startsWith('omnimind://memories/recent')) {
+        const params = this.parseResourceQuery(uri);
+        const requestedLimit = Number(params.get('limit') ?? 20);
+        const limit = Math.max(1, Math.min(100, Number.isFinite(requestedLimit) ? requestedLimit : 20));
+        const overrideNamespace = params.get('namespace') ?? undefined;
+        const effectiveNamespace =
+          overrideNamespace ?? (this.clientNamespace !== 'default' ? this.clientNamespace : undefined);
+
+        const idsResult = this.store.getAllMemoryIds();
+        const memories: unknown[] = [];
+        if (idsResult.ok) {
+          for (const id of idsResult.value) {
+            const r = await this.store.get(id);
+            if (r.ok && r.value) {
+              if (effectiveNamespace && r.value.namespace !== effectiveNamespace) continue;
+              memories.push(r.value);
+            }
+          }
+        }
+        memories.sort((a, b) => (b as { createdAt: number }).createdAt - (a as { createdAt: number }).createdAt);
+        const slice = memories.slice(0, limit);
+
+        return {
+          contents: [
+            {
+              uri,
+              mimeType: 'application/json',
+              text: JSON.stringify(
+                {
+                  namespace: effectiveNamespace ?? 'all',
+                  count: slice.length,
+                  memories: slice,
+                },
+                null,
+                2,
+              ),
+            },
+          ],
+        };
+      }
+
+      if (uri === 'omnimind://entities/list') {
+        const entitiesResult = this.store.queryEntities({ limit: 1000 });
+        const entities = entitiesResult.ok ? entitiesResult.value : [];
+        return {
+          contents: [
+            {
+              uri,
+              mimeType: 'application/json',
+              text: JSON.stringify({ count: entities.length, entities }, null, 2),
+            },
+          ],
+        };
+      }
+
+      if (uri === 'omnimind://relations/list') {
+        const relationsResult = this.store.queryRelations({ limit: 1000 });
+        const relations = relationsResult.ok ? relationsResult.value : [];
+        return {
+          contents: [
+            {
+              uri,
+              mimeType: 'application/json',
+              text: JSON.stringify({ count: relations.length, relations }, null, 2),
+            },
+          ],
+        };
+      }
+
       throw new Error(`Unknown resource: ${uri}`);
-    });
+  }
+
+  private parseResourceQuery(uri: string): URLSearchParams {
+    const qIdx = uri.indexOf('?');
+    if (qIdx < 0) return new URLSearchParams();
+    return new URLSearchParams(uri.slice(qIdx + 1));
   }
 
   private setupPromptHandlers(): void {
@@ -491,56 +632,87 @@ export class OmnimindMcpServer {
             },
           ],
         },
+        {
+          name: 'compact-context',
+          description:
+            'Compact a long conversation history to fit a token budget while preserving <omnimind_predictions> blocks',
+          arguments: [
+            { name: 'history', description: 'Full chat history to compact', required: true },
+            {
+              name: 'tokenBudget',
+              description: 'Max tokens in the output (default 150)',
+              required: false,
+            },
+          ],
+        },
       ],
     }));
 
-    this.server.setRequestHandler(GetPromptRequestSchema, async (request) => {
-      if (request.params.name === 'memory-aware') {
-        const args = request.params.arguments ?? {};
-        const fingerprint = buildFingerprint({
-          projectPath: (args.projectPath as string) ?? process.cwd(),
-          gitBranch: (args.gitBranch as string) ?? 'unknown',
-          currentFile: (args.currentFile as string) ?? 'unknown',
-          recentTools: [],
-          recentWings: [],
-          recentRooms: [],
-        });
+    this.server.setRequestHandler(GetPromptRequestSchema, async (request) =>
+      this.handleGetPrompt(request.params.name, request.params.arguments ?? {}),
+    );
+  }
 
-        const predictions = await this.predictor.predict(fingerprint, async (id) => {
-          const result = await this.store.get(id);
-          return result.ok ? result.value : null;
-        });
+  /** Public-for-tests: handle a prompts/get request by name + args. */
+  async handleGetPrompt(name: string, args: Record<string, unknown>) {
+    if (name === 'memory-aware') {
+      const fingerprint = buildFingerprint({
+        projectPath: (args.projectPath as string) ?? process.cwd(),
+        gitBranch: (args.gitBranch as string) ?? 'unknown',
+        currentFile: (args.currentFile as string) ?? 'unknown',
+        recentTools: [],
+        recentWings: [],
+        recentRooms: [],
+      });
 
-        let injectionText = '';
-        if (predictions.ok && predictions.value.length > 0) {
-          const lines = [];
-          for (const pred of predictions.value.slice(0, 3)) {
-            const mem = await this.store.get(pred.memoryId);
-            if (mem.ok && mem.value) {
-              lines.push(`[${mem.value.wing}] ${mem.value.content.substring(0, 200)}`);
-            }
-          }
-          if (lines.length > 0) {
-            injectionText = `\n<omnimind_predictions>\n${lines.join('\n')}\n</omnimind_predictions>\n`;
-          }
-        }
+      const injector = new ContextInjector(
+        this.predictor,
+        async (id) => {
+          const r = await this.store.get(id);
+          return r.ok ? r.value : null;
+        },
+      );
+      const promptResult = await injector.getMemoryAwarePrompt(fingerprint);
+      if (!promptResult.ok) throw promptResult.error;
 
-        return {
-          description: 'Memory-aware system prompt',
-          messages: [
-            {
-              role: 'system',
-              content: {
-                type: 'text',
-                text: `You have access to the user's Omnimind memory system.${injectionText}`,
-              },
+      return {
+        description: 'Memory-aware system prompt',
+        messages: [
+          {
+            role: 'system',
+            content: { type: 'text', text: promptResult.value },
+          },
+        ],
+      };
+    }
+
+    if (name === 'compact-context') {
+      const history = (args.history as string) ?? '';
+      const tokenBudget = Number(args.tokenBudget ?? 150);
+      const result = compressContext(history, { tokenBudget });
+      if (!result.ok) throw result.error;
+      const r = result.value;
+      const summary = `Compressed ${r.tokensBefore} -> ${r.tokensAfter} tokens.`;
+
+      return {
+        description: 'Memory-aware compacted context',
+        messages: [
+          {
+            role: 'system',
+            content: {
+              type: 'text',
+              text: 'You are a helpful assistant. The following is a compacted conversation history:',
             },
-          ],
-        };
-      }
+          },
+          {
+            role: 'user',
+            content: { type: 'text', text: `${r.text}\n\n${summary}` },
+          },
+        ],
+      };
+    }
 
-      throw new Error(`Unknown prompt: ${request.params.name}`);
-    });
+    throw new Error(`Unknown prompt: ${name}`);
   }
 
   private async handleStatus() {
@@ -565,6 +737,8 @@ export class OmnimindMcpServer {
           text: [
             `Omnimind Status`,
             `================`,
+            `Namespace: ${this.clientNamespace}`,
+            `Instance: ${this.instanceId.substring(0, 8)}`,
             `Total memories: ${s.totalMemories}`,
             `By layer:`,
             layerInfo,
@@ -631,6 +805,28 @@ export class OmnimindMcpServer {
           type: 'text',
           text: `Synced ${events.value.length} events:\n${lines.join('\n')}`,
         },
+      ],
+    };
+  }
+
+  private async handleCompressContext(args: unknown) {
+    const input = CompressContextInput.parse(args);
+
+    const result = compressContext(input.history, { tokenBudget: input.tokenBudget });
+    if (!result.ok) {
+      throw result.error;
+    }
+
+    const r = result.value;
+    const summary =
+      `Compressed ${r.tokensBefore} -> ${r.tokensAfter} tokens ` +
+      `(kept ${r.predictionsKept} prediction block(s)` +
+      `${r.predictionsTruncated ? ', some truncated' : ''}).`;
+
+    return {
+      content: [
+        { type: 'text', text: r.text },
+        { type: 'text', text: r.warning ? `${summary}\n${r.warning}` : summary },
       ],
     };
   }
