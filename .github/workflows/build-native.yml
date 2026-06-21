@@ -129,9 +129,11 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # macOS code signing + notarization secrets.
           # If these are absent, the build falls back to unsigned bundles.
+          # APPLE_SIGNING_IDENTITY is intentionally omitted: Tauri selects the
+          # correct Developer ID certificate from the provided .p12 automatically,
+          # avoiding mismatches between the certificate name and the identity string.
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
