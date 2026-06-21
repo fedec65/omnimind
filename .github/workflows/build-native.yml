@@ -127,6 +127,14 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # macOS code signing + notarization secrets.
+          # If these are absent, the build falls back to unsigned bundles.
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: 'Omnimind Explorer ${{ github.ref_name }}'
@@ -134,7 +142,7 @@ jobs:
             Self-contained native app bundles. No Node.js installation required.
 
             ### Installation
-            - **macOS**: Download the `.dmg` for your chip (Apple Silicon = `aarch64`, Intel = `x86_64`), open it, and drag the app to Applications.
+            - **macOS**: Download the `.dmg` for your chip (Apple Silicon = `aarch64`, Intel = `x86_64`), open it, and drag the app to Applications. Signed and notarized builds should open without Gatekeeper warnings.
             - **Windows**: Download the `.msi` installer and run it.
             - **Linux**: Download the `.deb` package (Debian/Ubuntu) or `.AppImage` (portable).
 
@@ -142,3 +150,43 @@ jobs:
           releaseDraft: ${{ inputs.draft || 'true' }}
           prerelease: false
           args: ${{ matrix.args }}
+
+      - name: Verify macOS signing and notarization
+        if: matrix.platform == 'macos-latest'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+        run: |
+          if [ -z "$APPLE_CERTIFICATE" ]; then
+            echo "No Apple certificate configured; skipping verification."
+            exit 0
+          fi
+
+          DMG_PATH=$(ls src-tauri/target/release/bundle/dmg/*.dmg | head -n 1)
+          if [ -z "$DMG_PATH" ]; then
+            echo "DMG not found in src-tauri/target/release/bundle/dmg/"
+            exit 1
+          fi
+
+          echo "Verifying: $DMG_PATH"
+
+          mkdir -p /tmp/omnimind-dmg
+          hdiutil attach "$DMG_PATH" -mountpoint /tmp/omnimind-dmg -nobrowse
+
+          APP_PATH=$(find /tmp/omnimind-dmg -maxdepth 1 -name "*.app" | head -n 1)
+          if [ -z "$APP_PATH" ]; then
+            echo "App bundle not found inside DMG"
+            hdiutil detach /tmp/omnimind-dmg || true
+            exit 1
+          fi
+
+          echo "Verifying code signature..."
+          codesign -dv --verbose=4 "$APP_PATH"
+
+          echo "Verifying notarization acceptance..."
+          spctl -a -vv "$APP_PATH"
+
+          echo "Verifying notarization staple on DMG..."
+          xcrun stapler validate "$DMG_PATH"
+
+          hdiutil detach /tmp/omnimind-dmg
+          echo "macOS signing and notarization verified successfully."
