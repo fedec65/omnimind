@@ -123,6 +123,48 @@ jobs:
             Write-Host "$($_.Name): ${sizeMB} MB"
           }
 
+      - name: Import Apple certificate and sign bundled native binaries
+        if: matrix.platform == 'macos-latest'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          if [ -z "$APPLE_CERTIFICATE" ]; then
+            echo "No Apple certificate configured; skipping binary signing."
+            exit 0
+          fi
+
+          KEYCHAIN_PASSWORD=$(openssl rand -base64 32)
+          KEYCHAIN_PATH="$RUNNER_TEMP/app-signing.keychain-db"
+
+          # Create and configure temporary keychain
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          # Import certificate
+          echo "$APPLE_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/signing-cert.p12"
+          security import "$RUNNER_TEMP/signing-cert.p12" -k "$KEYCHAIN_PATH" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          # Find Developer ID Application identity
+          SIGNING_IDENTITY=$(security find-identity -v -p codesigning "$KEYCHAIN_PATH" | grep -oE 'Developer ID Application: [^"()]+ \([A-Z0-9]+\)' | head -n 1)
+          if [ -z "$SIGNING_IDENTITY" ]; then
+            echo "No Developer ID Application identity found in keychain"
+            exit 1
+          fi
+          echo "Using signing identity: $SIGNING_IDENTITY"
+
+          # Sign every Mach-O binary inside bundled node_modules so notarization passes
+          find src-tauri/resources/node_modules -type f -print0 | while IFS= read -r -d '' file; do
+            if file "$file" | grep -q "Mach-O"; then
+              echo "Signing: $file"
+              codesign --sign "$SIGNING_IDENTITY" --keychain "$KEYCHAIN_PATH" --options runtime --timestamp --force "$file" || echo "Warning: failed to sign $file"
+            fi
+          done
+
+          echo "Bundled native binaries signed."
+
       - name: Build Tauri
         uses: tauri-apps/tauri-action@v0
         env:
