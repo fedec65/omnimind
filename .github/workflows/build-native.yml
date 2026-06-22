@@ -142,26 +142,83 @@ jobs:
           security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
 
+          # Add temporary keychain to the user search list so codesign can resolve
+          # identities from it. Without this, codesign --keychain often fails with
+          # "The specified item could not be found in the keychain."
+          security list-keychains -d user -s "$KEYCHAIN_PATH" $(security list-keychains -d user | sed -e 's/^"//' -e 's/"$//' | tr '\n' ' ')
+
           # Import certificate
           echo "$APPLE_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/signing-cert.p12"
           security import "$RUNNER_TEMP/signing-cert.p12" -k "$KEYCHAIN_PATH" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
 
-          # Find Developer ID Application identity
-          SIGNING_IDENTITY=$(security find-identity -v -p codesigning "$KEYCHAIN_PATH" | grep -oE 'Developer ID Application: [^"()]+ \([A-Z0-9]+\)' | head -n 1)
+          # Find the full signing identity name (inside quotes in security output).
+          # The previous grep matched a substring, so a certificate named
+          # "Mac Developer ID Application: ..." was misread as "Developer ID Application: ..."
+          # and codesign could not find it.
+          SIGNING_IDENTITY=$(security find-identity -v -p codesigning "$KEYCHAIN_PATH" | sed -n 's/.*"\([^"]*\)".*/\1/p' | head -n 1)
           if [ -z "$SIGNING_IDENTITY" ]; then
-            echo "No Developer ID Application identity found in keychain"
+            echo "No code signing identity found in keychain"
+            security find-identity -v -p codesigning "$KEYCHAIN_PATH"
             exit 1
           fi
           echo "Using signing identity: $SIGNING_IDENTITY"
 
-          # Sign every Mach-O binary inside bundled node_modules so notarization passes
-          find src-tauri/resources/node_modules -type f -print0 | while IFS= read -r -d '' file; do
-            if file "$file" | grep -q "Mach-O"; then
-              echo "Signing: $file"
-              codesign --sign "$SIGNING_IDENTITY" --keychain "$KEYCHAIN_PATH" --options runtime --timestamp --force "$file" || echo "Warning: failed to sign $file"
+          # Notarization requires a real Developer ID Application certificate.
+          # A "Mac Developer" or "Apple Development" certificate will fail later.
+          if [[ "$SIGNING_IDENTITY" != "Developer ID Application:"* ]]; then
+            echo "ERROR: The APPLE_CERTIFICATE secret does not contain a Developer ID Application certificate."
+            echo "Current identity: $SIGNING_IDENTITY"
+            echo "Notarization requires a certificate named exactly 'Developer ID Application: <Name> (<Team ID>)'."
+            echo "Please download the correct certificate from the Apple Developer portal and update the APPLE_CERTIFICATE secret."
+            exit 1
+          fi
+
+          # Collect unique Mach-O binaries (file or symlink target) so each target
+          # is signed once and .bin symlinks resolve to a valid signed executable.
+          FILES=()
+          while IFS= read -r -d '' file; do
+            target="$file"
+            if [ -L "$file" ]; then
+              target=$(realpath "$file" 2>/dev/null || true)
+              [ -z "$target" ] && continue
             fi
-          done
+            if [ -f "$target" ] && file "$target" | grep -q "Mach-O"; then
+              real=$(realpath "$target" 2>/dev/null || echo "$target")
+              duplicate=false
+              for existing in "${FILES[@]}"; do
+                if [ "$existing" = "$real" ]; then
+                  duplicate=true
+                  break
+                fi
+              done
+              if [ "$duplicate" = false ]; then
+                FILES+=("$real")
+              fi
+            fi
+          done < <(find src-tauri/resources/node_modules \( -type f -o -type l \) -print0)
+
+          if [ ${#FILES[@]} -eq 0 ]; then
+            echo "No Mach-O binaries found in bundled node_modules"
+          else
+            ERRORS=0
+            for file in "${FILES[@]}"; do
+              echo "Signing: $file"
+              if ! codesign --sign "$SIGNING_IDENTITY" --options runtime --timestamp --force "$file"; then
+                echo "ERROR: failed to sign $file"
+                ERRORS=$((ERRORS + 1))
+              fi
+            done
+
+            if [ "$ERRORS" -gt 0 ]; then
+              echo "$ERRORS bundled binary(s) failed to sign"
+              exit 1
+            fi
+
+            # Verify a sample so we know the signatures are valid before Tauri bundles them
+            echo "Verifying sample signature: ${FILES[0]}"
+            codesign -dv --verbose=4 "${FILES[0]}"
+          fi
 
           echo "Bundled native binaries signed."
 
