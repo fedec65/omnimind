@@ -324,14 +324,24 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
       sendJson(res, 200, result.value);
       return;
     }
-    // Fallback: return all entities and relations
+    // Fallback: return a coherent subgraph sample — keep only relations
+    // whose endpoints are both in the returned entity set. Dangling
+    // references otherwise break graph rendering ("node not found").
     const entResult = omni!.getEntities({ limit: 500 });
-    const relResult = omni!.getRelations({ limit: 1000 });
-    if (!entResult.ok || !relResult.ok) {
+    if (!entResult.ok) {
       sendJson(res, 500, { error: 'Failed to load graph data' });
       return;
     }
-    sendJson(res, 200, { entities: entResult.value, relations: relResult.value });
+    const entityIds = new Set(entResult.value.map((e) => e.id));
+    const relResult = omni!.getRelations({ limit: 5000 });
+    if (!relResult.ok) {
+      sendJson(res, 500, { error: 'Failed to load graph data' });
+      return;
+    }
+    const relations = relResult.value
+      .filter((r) => entityIds.has(r.subjectId) && entityIds.has(r.objectId))
+      .slice(0, 1000);
+    sendJson(res, 200, { entities: entResult.value, relations });
     return;
   }
 
