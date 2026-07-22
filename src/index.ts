@@ -401,12 +401,22 @@ export class Omnimind {
     }
 
     // Persist the aged memory back to the store
-    const updateResult = await this.memoryStore.update(memoryId, {
+    let updateResult = await this.memoryStore.update(memoryId, {
       content: aged.content,
       layer: aged.layer,
       conceptRefs: aged.conceptRefs,
       compressedRef: aged.compressedRef,
     });
+    if (!updateResult.ok && /UNIQUE constraint failed: memories\.content_hash/.test(updateResult.error.message)) {
+      // The aged representation is byte-identical to another memory's in the
+      // same namespace (dedup on content_hash+namespace). Keep this memory's
+      // original content and only advance its layer — no data loss, no collision.
+      updateResult = await this.memoryStore.update(memoryId, {
+        layer: aged.layer,
+        conceptRefs: aged.conceptRefs,
+        compressedRef: aged.compressedRef,
+      });
+    }
     if (!updateResult.ok) {
       console.error(`[Omnimind] Failed to update aged memory ${memoryId}:`, updateResult.error.message);
     }

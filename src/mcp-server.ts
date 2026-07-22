@@ -13,6 +13,11 @@
 
 import { OmnimindMcpServer } from './mcp/server.js';
 
+// MCP stdio servers own stdout for JSON-RPC. The Omnimind facade, bus,
+// and adapters log via console.log — reroute it to stderr so library
+// logging can never corrupt the protocol stream.
+console.log = console.error;
+
 const server = new OmnimindMcpServer();
 server.start().catch((error: unknown) => {
   console.error('Fatal error:', error instanceof Error ? error.message : String(error));

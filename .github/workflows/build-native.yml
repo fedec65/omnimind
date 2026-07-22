@@ -123,10 +123,119 @@ jobs:
             Write-Host "$($_.Name): ${sizeMB} MB"
           }
 
+      - name: Import Apple certificate and sign bundled native binaries
+        if: matrix.platform == 'macos-latest'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          if [ -z "$APPLE_CERTIFICATE" ]; then
+            echo "No Apple certificate configured; skipping binary signing."
+            exit 0
+          fi
+
+          KEYCHAIN_PASSWORD=$(openssl rand -base64 32)
+          KEYCHAIN_PATH="$RUNNER_TEMP/app-signing.keychain-db"
+
+          # Create and configure temporary keychain
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          # Add temporary keychain to the user search list so codesign can resolve
+          # identities from it. Without this, codesign --keychain often fails with
+          # "The specified item could not be found in the keychain."
+          security list-keychains -d user -s "$KEYCHAIN_PATH" $(security list-keychains -d user | sed -e 's/^"//' -e 's/"$//' | tr '\n' ' ')
+
+          # Import certificate
+          echo "$APPLE_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/signing-cert.p12"
+          security import "$RUNNER_TEMP/signing-cert.p12" -k "$KEYCHAIN_PATH" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          # Find the full signing identity name (inside quotes in security output).
+          # The previous grep matched a substring, so a certificate named
+          # "Mac Developer ID Application: ..." was misread as "Developer ID Application: ..."
+          # and codesign could not find it.
+          SIGNING_IDENTITY=$(security find-identity -v -p codesigning "$KEYCHAIN_PATH" | sed -n 's/.*"\([^"]*\)".*/\1/p' | head -n 1)
+          if [ -z "$SIGNING_IDENTITY" ]; then
+            echo "No code signing identity found in keychain"
+            security find-identity -v -p codesigning "$KEYCHAIN_PATH"
+            exit 1
+          fi
+          echo "Using signing identity: $SIGNING_IDENTITY"
+
+          # Notarization requires a real Developer ID Application certificate.
+          # A "Mac Developer" or "Apple Development" certificate will fail later.
+          if [[ "$SIGNING_IDENTITY" != "Developer ID Application:"* ]]; then
+            echo "ERROR: The APPLE_CERTIFICATE secret does not contain a Developer ID Application certificate."
+            echo "Current identity: $SIGNING_IDENTITY"
+            echo "Notarization requires a certificate named exactly 'Developer ID Application: <Name> (<Team ID>)'."
+            echo "Please download the correct certificate from the Apple Developer portal and update the APPLE_CERTIFICATE secret."
+            exit 1
+          fi
+
+          # Collect unique Mach-O binaries (file or symlink target) so each target
+          # is signed once and .bin symlinks resolve to a valid signed executable.
+          FILES=()
+          while IFS= read -r -d '' file; do
+            target="$file"
+            if [ -L "$file" ]; then
+              target=$(realpath "$file" 2>/dev/null || true)
+              [ -z "$target" ] && continue
+            fi
+            if [ -f "$target" ] && file "$target" | grep -q "Mach-O"; then
+              real=$(realpath "$target" 2>/dev/null || echo "$target")
+              duplicate=false
+              for existing in "${FILES[@]}"; do
+                if [ "$existing" = "$real" ]; then
+                  duplicate=true
+                  break
+                fi
+              done
+              if [ "$duplicate" = false ]; then
+                FILES+=("$real")
+              fi
+            fi
+          done < <(find src-tauri/resources/node_modules \( -type f -o -type l \) -print0)
+
+          if [ ${#FILES[@]} -eq 0 ]; then
+            echo "No Mach-O binaries found in bundled node_modules"
+          else
+            ERRORS=0
+            for file in "${FILES[@]}"; do
+              echo "Signing: $file"
+              if ! codesign --sign "$SIGNING_IDENTITY" --options runtime --timestamp --force "$file"; then
+                echo "ERROR: failed to sign $file"
+                ERRORS=$((ERRORS + 1))
+              fi
+            done
+
+            if [ "$ERRORS" -gt 0 ]; then
+              echo "$ERRORS bundled binary(s) failed to sign"
+              exit 1
+            fi
+
+            # Verify a sample so we know the signatures are valid before Tauri bundles them
+            echo "Verifying sample signature: ${FILES[0]}"
+            codesign -dv --verbose=4 "${FILES[0]}"
+          fi
+
+          echo "Bundled native binaries signed."
+
       - name: Build Tauri
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # macOS code signing + notarization secrets.
+          # If these are absent, the build falls back to unsigned bundles.
+          # APPLE_SIGNING_IDENTITY is intentionally omitted: Tauri selects the
+          # correct Developer ID certificate from the provided .p12 automatically,
+          # avoiding mismatches between the certificate name and the identity string.
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: 'Omnimind Explorer ${{ github.ref_name }}'
@@ -134,7 +243,7 @@ jobs:
             Self-contained native app bundles. No Node.js installation required.
 
             ### Installation
-            - **macOS**: Download the `.dmg` for your chip (Apple Silicon = `aarch64`, Intel = `x86_64`), open it, and drag the app to Applications.
+            - **macOS**: Download the `.dmg` for your chip (Apple Silicon = `aarch64`, Intel = `x86_64`), open it, and drag the app to Applications. Signed and notarized builds should open without Gatekeeper warnings.
             - **Windows**: Download the `.msi` installer and run it.
             - **Linux**: Download the `.deb` package (Debian/Ubuntu) or `.AppImage` (portable).
 
@@ -142,3 +251,43 @@ jobs:
           releaseDraft: ${{ inputs.draft || 'true' }}
           prerelease: false
           args: ${{ matrix.args }}
+
+      - name: Verify macOS signing and notarization
+        if: matrix.platform == 'macos-latest'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+        run: |
+          if [ -z "$APPLE_CERTIFICATE" ]; then
+            echo "No Apple certificate configured; skipping verification."
+            exit 0
+          fi
+
+          DMG_PATH=$(ls src-tauri/target/release/bundle/dmg/*.dmg | head -n 1)
+          if [ -z "$DMG_PATH" ]; then
+            echo "DMG not found in src-tauri/target/release/bundle/dmg/"
+            exit 1
+          fi
+
+          echo "Verifying: $DMG_PATH"
+
+          mkdir -p /tmp/omnimind-dmg
+          hdiutil attach "$DMG_PATH" -mountpoint /tmp/omnimind-dmg -nobrowse
+
+          APP_PATH=$(find /tmp/omnimind-dmg -maxdepth 1 -name "*.app" | head -n 1)
+          if [ -z "$APP_PATH" ]; then
+            echo "App bundle not found inside DMG"
+            hdiutil detach /tmp/omnimind-dmg || true
+            exit 1
+          fi
+
+          echo "Verifying code signature..."
+          codesign -dv --verbose=4 "$APP_PATH"
+
+          echo "Verifying notarization acceptance..."
+          spctl -a -vv "$APP_PATH"
+
+          echo "Verifying notarization staple on DMG..."
+          xcrun stapler validate "$DMG_PATH"
+
+          hdiutil detach /tmp/omnimind-dmg
+          echo "macOS signing and notarization verified successfully."
