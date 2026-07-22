@@ -104,6 +104,28 @@ cd "$RESOURCES_DIR"
 node ../../scripts/prune-for-bundle.js "$PRUNE_PLATFORM"
 cd ../..
 
+# --- Rebuild ABI-sensitive native modules against the bundled Node ---
+# node_modules was installed by the build machine's Node, whose version may
+# differ from the bundled runtime (e.g. CI Node 22 vs bundled Node 20).
+# better-sqlite3 carries an ABI-specific .node binding; rebuild it against
+# the bundled runtime so the sidecar can actually load it.
+REPO_ROOT="$(pwd)"
+if [[ "$PLATFORM" == win32-x64 ]]; then
+  BUNDLED_NODE="$REPO_ROOT/$RESOURCES_DIR/node/node.exe"
+  BUNDLED_NODE_HOME="$REPO_ROOT/$RESOURCES_DIR/node"
+  NPM_CLI="$REPO_ROOT/$RESOURCES_DIR/node/node_modules/npm/bin/npm-cli.js"
+else
+  BUNDLED_NODE="$REPO_ROOT/$RESOURCES_DIR/node/bin/node"
+  BUNDLED_NODE_HOME="$REPO_ROOT/$RESOURCES_DIR/node/bin"
+  NPM_CLI="$REPO_ROOT/$RESOURCES_DIR/node/lib/node_modules/npm/bin/npm-cli.js"
+fi
+
+if [[ -d "$RESOURCES_DIR/node_modules/better-sqlite3" ]]; then
+  echo "[prepare] Rebuilding better-sqlite3 against bundled Node ${NODE_VERSION}"
+  (cd "$RESOURCES_DIR/node_modules/better-sqlite3" \
+    && PATH="$BUNDLED_NODE_HOME:$PATH" "$BUNDLED_NODE" "$NPM_CLI" run install)
+fi
+
 # --- Size report ---
 echo "[prepare] Done. Resource sizes:"
 du -sh "$RESOURCES_DIR"/* 2>/dev/null || true
