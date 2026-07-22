@@ -34,14 +34,11 @@ import { randomUUID } from 'crypto';
 import { MemoryStore } from '../core/MemoryStore.js';
 import { IntentPredictor, buildFingerprint } from '../prediction/IntentPredictor.js';
 import { MemoryBus } from '../bus/MemoryBus.js';
-import { ClaudeAdapter } from '../bus/adapters/ClaudeAdapter.js';
-import { ClaudeDesktopAdapter } from '../bus/adapters/ClaudeDesktopAdapter.js';
-import { CursorAdapter } from '../bus/adapters/CursorAdapter.js';
-import { ChatGPTAdapter } from '../bus/adapters/ChatGPTAdapter.js';
+import { Omnimind } from '../index.js';
 import { EventType } from '../bus/types.js';
 import { join } from 'path';
 import { homedir } from 'os';
-import { URLSearchParams } from 'node:url';
+import { URLSearchParams, pathToFileURL } from 'node:url';
 import { NamespaceRegistry } from './namespace.js';
 import { compressContext } from '../prediction/ContextCompressor.js';
 import { ContextInjector } from '../prediction/ContextInjector.js';
@@ -108,6 +105,8 @@ export class OmnimindMcpServer {
   private store: MemoryStore;
   private predictor: IntentPredictor;
   private bus: MemoryBus;
+  /** Facade backing this server once init() runs — single source of wiring. */
+  private omni: Omnimind | null = null;
   private initialized = false;
   private clientNamespace: string = 'default';
   private instanceId: string = randomUUID();
@@ -139,38 +138,34 @@ export class OmnimindMcpServer {
   }
 
   async init(): Promise<void> {
-    const result = await this.store.init();
-    if (!result.ok) {
-      throw new Error(`Failed to initialize memory store: ${result.error.message}`);
-    }
+    // Ride on the Omnimind facade so the MCP server shares the exact same
+    // wiring as every other entry point: pattern persistence (PatternStore),
+    // activity tracking, aging pipeline, and bus adapters.
+    this.omni = await Omnimind.create({
+      dataDir: process.env.OMNIMIND_DATA_DIR ?? join(homedir(), '.omnimind'),
+    });
 
-    // Initialize bus with all adapters
-    const claudeAdapter = new ClaudeAdapter(this.bus, { processExistingOnConnect: true });
-    const claudeResult = await this.bus.registerAdapter(claudeAdapter);
-    if (!claudeResult.ok) {
-      console.error(`[Omnimind MCP] Claude adapter failed: ${claudeResult.error.message}`);
-    }
-
-    const cursorAdapter = new CursorAdapter(this.bus);
-    const cursorResult = await this.bus.registerAdapter(cursorAdapter);
-    if (!cursorResult.ok) {
-      console.error(`[Omnimind MCP] Cursor adapter failed: ${cursorResult.error.message}`);
-    }
-
-    const chatgptAdapter = new ChatGPTAdapter(this.bus);
-    const chatgptResult = await this.bus.registerAdapter(chatgptAdapter);
-    if (!chatgptResult.ok) {
-      console.error(`[Omnimind MCP] ChatGPT adapter failed: ${chatgptResult.error.message}`);
-    }
-
-    const claudeDesktopAdapter = new ClaudeDesktopAdapter(this.bus, { processExistingOnConnect: true });
-    const claudeDesktopResult = await this.bus.registerAdapter(claudeDesktopAdapter);
-    if (!claudeDesktopResult.ok) {
-      console.error(`[Omnimind MCP] Claude Desktop adapter failed: ${claudeDesktopResult.error.message}`);
-    }
+    // Swap the constructor's standalone components for the facade's wired ones.
+    // (The constructor's MemoryStore is lazy — it never opened the DB.)
+    this.store = this.omni.memoryStore;
+    this.predictor = this.omni.predictor;
+    this.bus = this.omni.bus;
 
     this.initialized = true;
     console.error('[Omnimind MCP] Server initialized');
+
+    // Backfill aging in the background — aging is otherwise lazy (on access),
+    // so memories that are never read would sit at L0 forever. Fire-and-forget:
+    // the loop awaits per memory, keeping the stdio server responsive.
+    void this.omni.bulkAge()
+      .then((result) => {
+        if (result.ok && result.value.aged > 0) {
+          console.error(
+            `[Omnimind MCP] Startup aging: ${result.value.aged} aged, ${result.value.skipped} skipped`,
+          );
+        }
+      })
+      .catch((e) => console.error('[Omnimind MCP] Startup aging failed:', e));
   }
 
   async start(): Promise<void> {
@@ -316,6 +311,15 @@ export class OmnimindMcpServer {
       };
     }
 
+    // Facade wiring: feed prediction learning and lazy aging on access.
+    // Only meaningful after init(); tests inject a bare store and skip this.
+    if (this.omni) {
+      for (const m of memories.slice(0, 5)) {
+        this.omni.activityTracker.recordMemoryAccess(m.memory.id);
+        void this.omni.checkAging(m.memory.id).catch(() => {});
+      }
+    }
+
     const lines = memories.map((m: import('../core/types.js').SearchResult, i: number) => {
       const layerNames = ['verbatim', 'compressed', 'concept', 'wisdom'];
       return `${i + 1}. [${m.memory.wing}/${m.memory.room}] (${layerNames[m.memory.layer]})\n   ${m.memory.content.substring(0, 300)}${m.memory.content.length > 300 ? '...' : ''}`;
@@ -346,6 +350,8 @@ export class OmnimindMcpServer {
     }
 
     const memory = result.value;
+    // Facade wiring: storing in this context is a prediction-learning signal.
+    this.omni?.activityTracker.recordMemoryAccess(memory.id);
     return {
       content: [
         {
@@ -373,6 +379,12 @@ export class OmnimindMcpServer {
     }
 
     const memories = result.value;
+    // Facade wiring: prediction-learning signal for each stored turn.
+    if (this.omni) {
+      for (const m of memories) {
+        this.omni.activityTracker.recordMemoryAccess(m.id);
+      }
+    }
     return {
       content: [
         {
@@ -841,5 +853,10 @@ function convertZodToJsonSchema(schema: z.ZodType): Record<string, unknown> {
 
 // ─── Entry Point ──────────────────────────────────────────────────
 
-const server = new OmnimindMcpServer();
-server.start().catch(console.error);
+// Auto-start only when executed directly (`node dist/mcp/server.js`).
+// When imported (tests, or the mcp-server.ts bin entry) the caller
+// drives start() — importing this module must have no side effects.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  const server = new OmnimindMcpServer();
+  server.start().catch(console.error);
+}
