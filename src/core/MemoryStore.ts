@@ -80,6 +80,15 @@ CREATE TABLE IF NOT EXISTS memories_archive (
 CREATE INDEX IF NOT EXISTS idx_archive_namespace ON memories_archive(namespace);
 CREATE INDEX IF NOT EXISTS idx_archive_archived_at ON memories_archive(archived_at);
 
+-- Content backup before aging transitions (enables lossless graph rebuilds)
+CREATE TABLE IF NOT EXISTS memory_versions (
+  memory_id     TEXT NOT NULL,
+  layer         INTEGER NOT NULL,
+  content       TEXT NOT NULL,
+  backed_up_at  INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_versions_memory ON memory_versions(memory_id);
+
 -- Entity table for knowledge graph
 CREATE TABLE IF NOT EXISTS entities (
   id              TEXT PRIMARY KEY,
@@ -639,9 +648,25 @@ export class MemoryStore {
     }
   }
 
-  /** Delete a memory by ID */
-  async delete(id: string): Promise<Result<void>> {
+  /**
+   * Back up a memory's content before an aging transition overwrites it.
+   * Enables lossless graph rebuilds (see `omnimind rebuild-graph`).
+   */
+  saveMemoryVersion(memoryId: string, layer: number, content: string): Result<void> {
     if (!this.initialized) return err(new Error('Store not initialized'));
+
+    try {
+      this.db!.prepare(
+        'INSERT INTO memory_versions (memory_id, layer, content, backed_up_at) VALUES (?, ?, ?, ?)',
+      ).run(memoryId, layer, content, Date.now());
+      return ok(undefined);
+    } catch (error) {
+      return err(error instanceof Error ? error : new Error(String(error)));
+    }
+  }
+
+  /** Delete a memory by ID */
+  async delete(id: string): Promise<Result<void>> {    if (!this.initialized) return err(new Error('Store not initialized'));
 
     try {
       this.stmtDelete.run(id);
@@ -1588,8 +1613,19 @@ export class MemoryStore {
     }
   }
 
-  // ─── Settings ─────────────────────────────────────────────────────
+  /** Wipe all entities and relations. Returns how many of each were removed. */
+  clearGraph(): Result<{ entities: number; relations: number }> {
+    if (!this.initialized) return err(new Error('Store not initialized'));
+    try {
+      const rel = this.db!.prepare('DELETE FROM relations').run();
+      const ent = this.db!.prepare('DELETE FROM entities').run();
+      return ok({ entities: ent.changes, relations: rel.changes });
+    } catch (error) {
+      return err(error instanceof Error ? error : new Error(String(error)));
+    }
+  }
 
+  // ─── Settings ─────────────────────────────────────────────────────
   /** Get a single setting value */
   getSetting(key: string): Result<string | null> {
     if (!this.initialized) return err(new Error('Store not initialized'));

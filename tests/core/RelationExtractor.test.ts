@@ -67,3 +67,43 @@ describe('RelationExtractor', () => {
     expect(patterns.length).toBe(0);
   });
 });
+
+describe('RelationExtractor — noise dampening', () => {
+  const makeEntity = (name: string, type: string = 'concept'): Entity => ({
+    id: `entity_${name.toLowerCase()}`,
+    name,
+    type: type as Entity['type'],
+    description: null,
+    firstSeen: 0,
+    lastSeen: 0,
+    mentionCount: 1,
+  });
+
+  it('limits co-occurrence to the first 7 entities', () => {
+    const entities = Array.from({ length: 12 }, (_, i) => makeEntity(`Ent${i}`));
+    const relations = extractRelations('Ent0 Ent1 Ent2 Ent3 Ent4 Ent5 Ent6 Ent7 Ent8 Ent9 Ent10 Ent11', entities);
+
+    const coOccurrences = relations.filter(r => r.predicate === 'related_to');
+    // C(7,2) = 21 pairs among the first 7 entities
+    expect(coOccurrences.length).toBe(21);
+    expect(coOccurrences.every(r => !r.subjectId.includes('ent7') && !r.objectId.includes('ent7'))).toBe(true);
+  });
+
+  it('never emits related_to for pairs already linked by a verb relation', () => {
+    const entities = [makeEntity('App'), makeEntity('Redis')];
+    const relations = extractRelations('The App uses Redis for caching.', entities);
+
+    const coOccurrence = relations.find(r => r.predicate === 'related_to');
+    expect(coOccurrence).toBeUndefined();
+
+    const uses = relations.find(r => r.predicate === 'uses');
+    expect(uses).toBeDefined();
+  });
+
+  it('caps relations at 30 per text', () => {
+    const many = Array.from({ length: 15 }, (_, i) => makeEntity(`Item${i}`));
+    const relations = extractRelations('Item0 Item1 Item2 Item3 Item4 Item5 Item6', many);
+    expect(relations.length).toBeLessThanOrEqual(30);
+    expect(relations.length).toBe(21); // C(7,2)
+  });
+});

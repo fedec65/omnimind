@@ -394,10 +394,13 @@ See [ROADMAP.md](ROADMAP.md) for the full phased plan.
 - ✅ **Phase 3:** Cross-tool Memory Bus (MemoryBus, ConflictResolver, ClaudeAdapter), `omnimind_subscribe` + `omnimind_sync`
 - ✅ **Phase 4:** Visual Memory Explorer (Tauri + Svelte 5 desktop GUI), HTTP REST API, Search/Timeline/Graph views
 
+**Completed (v0.6.8):**
+- ✅ Heuristic NER for concept extraction (stoplist + sentence-initial discount + canonicalization), graph noise dampening, `omnimind rebuild-graph`
+
 **Upcoming:**
+- ONNX-based NER model (local, `@xenova/transformers`) as optional upgrade
 - MCP polish (auto-save hooks)
 - P2P encrypted sync
-- Advanced NER for concept extraction
 - Team memory spaces
 
 ## License
