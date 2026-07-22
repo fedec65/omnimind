@@ -50,6 +50,8 @@ export class PatternStore {
   constructor(options: { dbPath: string; flushIntervalMs?: number } = { dbPath: ':memory:' }) {
     this.db = new Database(options.dbPath);
     this.db.pragma('journal_mode = WAL');
+    // See MemoryStore: shared database file across processes.
+    this.db.pragma('busy_timeout = 3000');
     this.db.exec(INIT_SQL);
     this.flushIntervalMs = options.flushIntervalMs ?? 5000;
   }

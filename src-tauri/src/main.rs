@@ -74,7 +74,14 @@ fn start_node_server(handle: &tauri::AppHandle) -> (Option<Child>, String) {
 
 fn try_start_bundled_server(handle: &tauri::AppHandle) -> Option<(Child, u16)> {
     let resource_dir = handle.path().resource_dir().ok()?;
-    let app_data_dir = handle.path().app_data_dir().ok()?;
+
+    // Share the canonical data directory (~/.omnimind) with the MCP server
+    // and CLI so the app, agents, and terminal all read/write one memory
+    // store. Fall back to the app-private dir only if home is unavailable.
+    let data_dir = match handle.path().home_dir() {
+        Ok(home) => home.join(".omnimind"),
+        Err(_) => handle.path().app_data_dir().ok()?,
+    };
 
     // Platform-specific Node.js binary path
     let node_binary = if cfg!(target_os = "windows") {
@@ -93,14 +100,14 @@ fn try_start_bundled_server(handle: &tauri::AppHandle) -> Option<(Child, u16)> {
     let port = find_available_port()?;
 
     // Ensure data directory exists
-    let _ = std::fs::create_dir_all(&app_data_dir);
+    let _ = std::fs::create_dir_all(&data_dir);
 
     let transformers_cache = resource_dir.join(".cache");
 
     let child = Command::new(&node_binary)
         .arg(&server_script)
         .env("OMNIMIND_PORT", port.to_string())
-        .env("OMNIMIND_DATA_DIR", &app_data_dir)
+        .env("OMNIMIND_DATA_DIR", &data_dir)
         .env("TRANSFORMERS_CACHE", &transformers_cache)
         .env("OMNIMIND_SKIP_ADAPTERS", "1")
         .stdout(Stdio::piped())

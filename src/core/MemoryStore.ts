@@ -255,6 +255,10 @@ export class MemoryStore {
       // Open database
       this.db = new Database(this.config.dbPath);
       this.db.pragma('journal_mode = WAL');
+      // Tolerate concurrent writers (app sidecar + MCP server + CLI share
+      // the same database file): wait up to 3s on lock contention instead
+      // of failing immediately with SQLITE_BUSY.
+      this.db.pragma('busy_timeout = 3000');
       this.db.pragma('foreign_keys = ON');
 
       // Create tables
