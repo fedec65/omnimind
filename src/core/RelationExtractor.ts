@@ -32,6 +32,11 @@ const RELATION_PATTERNS: RelationPattern[] = [
   { pattern: /(\w+)\s+created?\s+(\w+)/gi, predicate: 'created' },
 ];
 
+/** Co-occurrence links are only drawn among the first N entities of a text */
+const COOCCURRENCE_ENTITY_LIMIT = 7;
+/** Hard cap on relations extracted from a single text */
+const MAX_RELATIONS_PER_TEXT = 30;
+
 /**
  * Extract relations from text using heuristics.
  *
@@ -83,18 +88,29 @@ export function extractRelations(
     }
   }
 
-  // Strategy 2: Co-occurrence (every pair of entities in the same text is "related_to")
-  for (let i = 0; i < entities.length; i++) {
-    for (let j = i + 1; j < entities.length; j++) {
-      const key = `${entities[i]!.id}|related_to|${entities[j]!.id}`;
-      const reverseKey = `${entities[j]!.id}|related_to|${entities[i]!.id}`;
-      if (!seen.has(key) && !seen.has(reverseKey)) {
+  // Strategy 2: Co-occurrence — entities appearing in the same text are
+  // "related_to". Dampened to fight combinatorial noise: only among the
+  // first COOCCURRENCE_ENTITY_LIMIT entities, never for pairs that already
+  // have a verb relation, and subject to the per-text cap.
+  const cooccurrenceEntities = entities.slice(0, COOCCURRENCE_ENTITY_LIMIT);
+  for (let i = 0; i < cooccurrenceEntities.length; i++) {
+    for (let j = i + 1; j < cooccurrenceEntities.length; j++) {
+      if (relations.length >= MAX_RELATIONS_PER_TEXT) return relations;
+      const key = `${cooccurrenceEntities[i]!.id}|related_to|${cooccurrenceEntities[j]!.id}`;
+      const reverseKey = `${cooccurrenceEntities[j]!.id}|related_to|${cooccurrenceEntities[i]!.id}`;
+      // Skip pairs already linked by a verb relation (any predicate, either direction)
+      const pairLinked = [...seen].some(
+        (k) =>
+          (k.startsWith(`${cooccurrenceEntities[i]!.id}|`) && k.endsWith(`|${cooccurrenceEntities[j]!.id}`)) ||
+          (k.startsWith(`${cooccurrenceEntities[j]!.id}|`) && k.endsWith(`|${cooccurrenceEntities[i]!.id}`)),
+      );
+      if (!seen.has(key) && !seen.has(reverseKey) && !pairLinked) {
         seen.add(key);
         relations.push({
           id: randomUUID(),
-          subjectId: entities[i]!.id,
+          subjectId: cooccurrenceEntities[i]!.id,
           predicate: 'related_to',
-          objectId: entities[j]!.id,
+          objectId: cooccurrenceEntities[j]!.id,
           validFrom: Date.now(),
           validTo: null,
           sourceMemory: sourceMemory ?? null,
@@ -104,7 +120,7 @@ export function extractRelations(
     }
   }
 
-  return relations;
+  return relations.slice(0, MAX_RELATIONS_PER_TEXT);
 }
 
 /** Find an entity ID by name (case-insensitive) */

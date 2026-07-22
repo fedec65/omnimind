@@ -21,6 +21,7 @@ import {
   ok,
   err,
 } from '../core/types.js';
+import { extractEntities } from '../core/EntityExtractor.js';
 
 /** Compression rule for shorthand transformation */
 interface CompressionRule {
@@ -194,8 +195,8 @@ export class AgingPipeline {
    * Stores concept references instead of full text.
    */
   private extractToL2(memory: Memory): Result<Memory> {
-    // Extract potential entities using regex patterns
-    const entities = this.extractEntities(memory.content);
+    // Extract potential entities via the heuristic NER (EntityExtractor)
+    const entities = extractEntities(memory.content);
 
     // Create a concept summary
     const conceptSummary = entities.length > 0
@@ -232,63 +233,6 @@ export class AgingPipeline {
     };
 
     return ok(updated);
-  }
-
-  /** Extract entities from text using heuristic patterns */
-  private extractEntities(text: string): Array<{ id: string; name: string; type: string }> {
-    const entities: Array<{ id: string; name: string; type: string }> = [];
-    const seen = new Set<string>();
-
-    // Pattern: Capitalized words (likely proper nouns), including acronyms like GraphQL
-    const properNounPattern = /\b[A-Z][a-z]+(?:[A-Z][a-z]+)*(?:[A-Z]{2,})?\b|\b[A-Z]{2,}\b/g;
-    const stopWords = new Set(['the', 'a', 'an', 'this', 'that', 'these', 'those', 'it', 'its']);
-    let match: RegExpExecArray | null;
-    while ((match = properNounPattern.exec(text)) !== null) {
-      const name = match[0];
-      const lower = name.toLowerCase();
-      if (!seen.has(lower) && name.length > 2 && !stopWords.has(lower)) {
-        seen.add(lower);
-        entities.push({
-          id: `entity_${lower}`,
-          name,
-          type: this.inferEntityType(name, text),
-        });
-      }
-      if (entities.length >= 10) break;
-    }
-
-    // Pattern: Quoted strings (likely important terms)
-    const quotedPattern = /"([^"]+)"|'([^']+)'/g;
-    while ((match = quotedPattern.exec(text)) !== null) {
-      const name = match[1] || match[2];
-      if (name && !seen.has(name.toLowerCase()) && name.length > 2) {
-        seen.add(name.toLowerCase());
-        entities.push({
-          id: `entity_${name.toLowerCase().replace(/\s+/g, '_')}`,
-          name,
-          type: 'concept',
-        });
-      }
-      if (entities.length >= 15) break;
-    }
-
-    return entities;
-  }
-
-  /** Infer entity type from surrounding context */
-  private inferEntityType(name: string, context: string): string {
-    const lower = context.toLowerCase();
-    const nameLower = name.toLowerCase();
-
-    if (lower.includes(`class ${nameLower}`) || lower.includes(`interface ${nameLower}`)) return 'class';
-    if (lower.includes(`function ${nameLower}`) || lower.includes(`def ${nameLower}`)) return 'function';
-    if (lower.includes(`import ${nameLower}`) || lower.includes(`from ${nameLower}`)) return 'module';
-    if (lower.includes(`api ${nameLower}`) || lower.includes(`${nameLower} endpoint`)) return 'api';
-    if (lower.includes(`database ${nameLower}`) || lower.includes(`db ${nameLower}`)) return 'database';
-    if (lower.includes(`service ${nameLower}`) || lower.includes(`${nameLower} service`)) return 'service';
-    if (/^[A-Z][a-z]+ [A-Z][a-z]+$/.test(name)) return 'person'; // "John Smith" pattern
-
-    return 'concept';
   }
 
   /** Extract recurring patterns from text */

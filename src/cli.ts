@@ -21,6 +21,7 @@
  */
 
 import { Omnimind } from './index.js';
+import { rebuildGraph } from './core/GraphRebuilder.js';
 import { homedir } from 'os';
 import { join, resolve } from 'path';
 
@@ -34,6 +35,7 @@ const commands: Record<string, (args: string[]) => Promise<void>> = {
   status,
   mine,
   wipe,
+  'rebuild-graph': rebuildGraphCommand,
   bus: busCommand,
 };
 
@@ -103,7 +105,10 @@ Commands:
     --wing <name>         Target wing
   
   wipe                    Clear all memories (!)
-  
+
+  rebuild-graph           Wipe and re-derive the knowledge graph (!)
+    --yes                 Confirm (memories are not touched)
+
   bus status              Show connected tools and subscriptions
   bus sync [tool-id]      Pull updates from specific tool
   bus conflicts           List unresolved conflicts
@@ -403,7 +408,43 @@ Bus commands:
   omni.close();
 }
 
+async function rebuildGraphCommand(): Promise<void> {
+  if (!process.argv.includes('--yes')) {
+    console.error('This will WIPE and rebuild the knowledge graph (entities + relations).');
+    console.error('Memories themselves are not touched.');
+    console.error('To confirm, run: omnimind rebuild-graph --yes');
+    process.exit(1);
+  }
+
+  const omni = await Omnimind.create({
+    adapters: false,
+    dataDir: process.env.OMNIMIND_DATA_DIR ?? undefined,
+  });
+
+  console.log('Rebuilding knowledge graph...');
+  const result = await rebuildGraph(omni.memoryStore);
+  if (!result.ok) {
+    console.error(`Error: ${result.error.message}`);
+    omni.close();
+    process.exit(1);
+  }
+
+  const r = result.value;
+  console.log(`Memories processed: ${r.memoriesProcessed} (skipped: ${r.memoriesSkipped})`);
+  console.log(`Entities:  ${r.entitiesBefore} → ${r.entitiesAfter}`);
+  console.log(`Relations: ${r.relationsBefore} → ${r.relationsAfter}`);
+  if (r.topEntities.length > 0) {
+    console.log('Top entities:');
+    for (const e of r.topEntities) {
+      console.log(`  ${e.name} (${e.type}) — ${e.mentionCount} mentions`);
+    }
+  }
+
+  omni.close();
+}
+
 async function wipe(): Promise<void> {
+
   console.error('This will delete ALL memories. This action cannot be undone.');
   console.error('To confirm, run: omnimind wipe --yes-i-am-sure');
 

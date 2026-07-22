@@ -400,7 +400,11 @@ export class Omnimind {
       aged = transition.value;
     }
 
-    // Persist the aged memory back to the store
+    // Persist the aged memory back to the store. Back up the current
+    // content first — aging overwrites it, and future graph rebuilds
+    // (e.g. better NER) need the original text.
+    this.memoryStore.saveMemoryVersion(memoryId, memory.layer, memory.content);
+
     let updateResult = await this.memoryStore.update(memoryId, {
       content: aged.content,
       layer: aged.layer,
