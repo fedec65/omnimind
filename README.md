@@ -28,7 +28,8 @@ Omnimind is a local memory engine that stores, searches, predicts, and visualize
 │  CROSS-TOOL MEMORY BUS                  │  ← MCP + event sync
 │  - MemoryBus (pub/sub)                  │
 │  - ConflictResolver                     │
-│  - ClaudeAdapter (more coming)          │
+│  - Adapters: Claude Code, Claude        │
+│    Desktop, Cursor, ChatGPT             │
 ├─────────────────────────────────────────┤
 │  PREDICTION LAYER                       │  ← < 5ms intent prediction
 │  - ActivityTracker (fs + bus watcher)   │
@@ -72,14 +73,14 @@ Download the latest release for your platform — no Node.js or technical setup 
 | **Windows** | `.msi` installer | ~175 MB |
 | **Linux** (Ubuntu/Debian) | `.deb` package | ~400 MB |
 
-📦 **[Download v0.6.4](https://github.com/fedec65/omnimind/releases/latest)**
+📦 **[Download v0.6.8](https://github.com/fedec65/omnimind/releases/latest)**
 
 **First launch:**
 1. Install the app (drag to Applications on macOS, run the installer on Windows, or `dpkg -i` on Linux)
-2. Double-click to open — the app creates its data directory and downloads the ~80MB ONNX model on first run
-3. The GUI opens automatically at `http://localhost:8844`
+2. Double-click to open — the app starts its bundled backend automatically (the ONNX model is included in the installer, nothing to download)
+3. The Omnimind Explorer window opens with your memories
 
-> **Note:** The desktop app includes the visual explorer and local memory engine. To connect Omnimind to Claude Code, Cursor, or other AI tools, you still need to set up [MCP integration](#mcp-integration) separately.
+> **Shared memory store:** the desktop app, the MCP server, and the CLI all read and write the **same database** at `~/.omnimind/`. Memories stored by Claude Code or Cursor show up in the app, and vice versa — no import or sync needed. Override the location for any entry point with the `OMNIMIND_DATA_DIR` environment variable.
 
 ### CLI / npm (Developers)
 
@@ -183,7 +184,19 @@ Keys are derived from your machine fingerprint + optional passphrase via HKDF-SH
 |--------|-------------|
 | `memory-aware` | System prompt with injected memory predictions |
 
-### Connecting to Claude Code
+### Setting up MCP clients
+
+Omnimind works with any MCP-compatible client. The server runs on stdio and is started by the client on demand.
+
+**Prerequisite:** install the package globally so `omnimind-mcp` is on your PATH:
+
+```bash
+npm install -g omnimind
+```
+
+> **Node.js version note:** Omnimind ships a native module (`better-sqlite3`) that is compiled for a specific Node.js ABI. Install and run the MCP server with the **same Node.js version** (e.g. install with Node 20 → run with Node 20). If you switch Node versions, run `npm rebuild better-sqlite3 -g omnimind` — otherwise the server crashes with `NODE_MODULE_VERSION` mismatch. For maximum determinism, point your client config at an explicit Node binary and the global install (see Kimi Code example below).
+
+#### Claude Code
 
 The fastest way is the one-liner setup:
 
@@ -193,22 +206,71 @@ npx omnimind setup-claude-code
 
 This writes the MCP server entry into `~/.claude/settings.json` automatically. After running it, restart Claude Code and Omnimind tools will appear. The setup is idempotent — running it again is safe and will not clobber other MCP server entries. Override the target path via `OMNIMIND_CLAUDE_SETTINGS_PATH=/path/to/settings.json npx omnimind setup-claude-code` for non-standard layouts.
 
-#### Manual configuration
-
-If you prefer to edit the JSON yourself, add this to `~/.claude/settings.json`:
+Manual configuration — add this to `~/.claude/settings.json`:
 
 ```json
 {
   "mcpServers": {
     "omnimind": {
       "command": "npx",
-      "args": ["omnimind-mcp"]
+      "args": ["-y", "omnimind-mcp"]
     }
   }
 }
 ```
 
-**Requirements:** `npm install -g omnimind` must be available in your PATH so that `npx omnimind-mcp` resolves correctly. The MCP server runs independently of the desktop GUI.
+#### Cursor
+
+Add to `~/.cursor/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "omnimind": {
+      "command": "npx",
+      "args": ["-y", "omnimind-mcp"]
+    }
+  }
+}
+```
+
+#### Claude Desktop
+
+Add to `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or `%APPDATA%\Claude\claude_desktop_config.json` (Windows):
+
+```json
+{
+  "mcpServers": {
+    "omnimind": {
+      "command": "npx",
+      "args": ["-y", "omnimind-mcp"]
+    }
+  }
+}
+```
+
+#### Kimi Code
+
+Add to `~/.kimi-code/mcp.json`. This example pins the Node runtime and the global install path, which avoids both npx startup overhead and ABI mismatches when multiple Node versions are installed:
+
+```json
+{
+  "mcpServers": {
+    "omnimind": {
+      "command": "/opt/homebrew/opt/node@20/bin/node",
+      "args": ["/opt/homebrew/lib/node_modules/omnimind/dist/mcp-server.js"]
+    }
+  }
+}
+```
+
+Adjust both paths to your system (`which node` and `npm root -g` tell you the right values).
+
+#### Any other MCP client
+
+Use the stdio command `npx -y omnimind-mcp` (or `node $(npm root -g)/omnimind/dist/mcp-server.js`) in whatever MCP configuration format your client uses.
+
+**After connecting:** restart the client, then call `omnimind_status` — you should see your namespace, memory counts, and layer distribution. On first start the server backfills memory aging in the background; with a large existing database this can take a minute or two of background CPU.
 
 ## HTTP API
 
@@ -293,7 +355,7 @@ npm run gui:build
 
 ### Test Coverage
 
-- **104 tests** across 14 test files
+- **226 tests** across 30 test files
 - ~90% lines, ~92% functions, ~75% branches
 
 ## Tech Stack
@@ -333,7 +395,7 @@ See [ROADMAP.md](ROADMAP.md) for the full phased plan.
 - ✅ **Phase 4:** Visual Memory Explorer (Tauri + Svelte 5 desktop GUI), HTTP REST API, Search/Timeline/Graph views
 
 **Upcoming:**
-- MCP polish (auto-save hooks, multi-agent isolation)
+- MCP polish (auto-save hooks)
 - P2P encrypted sync
 - Advanced NER for concept extraction
 - Team memory spaces
