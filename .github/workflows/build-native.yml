@@ -262,9 +262,11 @@ jobs:
             exit 0
           fi
 
-          DMG_PATH=$(ls src-tauri/target/release/bundle/dmg/*.dmg | head -n 1)
+          # With `--target <triple>`, tauri places bundles under
+          # target/<triple>/release/bundle/; without it, under target/release/bundle/.
+          DMG_PATH=$(ls src-tauri/target/release/bundle/dmg/*.dmg src-tauri/target/*/release/bundle/dmg/*.dmg 2>/dev/null | head -n 1)
           if [ -z "$DMG_PATH" ]; then
-            echo "DMG not found in src-tauri/target/release/bundle/dmg/"
+            echo "DMG not found under src-tauri/target/**/release/bundle/dmg/"
             exit 1
           fi
 
