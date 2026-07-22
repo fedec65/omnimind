@@ -28,10 +28,11 @@
 
   onMount(async () => {
     try {
-      const data = await api.entities();
+      // /api/graph returns a coherent sample (relations filtered to
+      // endpoints within the entity set) — avoids dangling references.
+      const data = await api.graph();
       entities = data.entities;
-      const relData = await api.relations();
-      relations = relData.relations;
+      relations = data.relations;
       renderGraph();
     } catch (e) {
       error = e instanceof Error ? e.message : 'Failed to load graph';
@@ -65,12 +66,16 @@
 
     const nodeById = new Map(entities.map(e => [e.id, e]));
 
-    const links = relations.map(r => ({
-      source: r.subjectId,
-      target: r.objectId,
-      predicate: r.predicate,
-      relation: r,
-    }));
+    // Defensive: only render links whose endpoints are both loaded —
+    // d3.forceLink throws "node not found" for dangling references.
+    const links = relations
+      .filter(r => nodeById.has(r.subjectId) && nodeById.has(r.objectId))
+      .map(r => ({
+        source: r.subjectId,
+        target: r.objectId,
+        predicate: r.predicate,
+        relation: r,
+      }));
 
     const simulation = d3.forceSimulation(entities as any)
       .force('link', d3.forceLink(links).id((d: any) => d.id).distance(100))
