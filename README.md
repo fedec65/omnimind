@@ -82,6 +82,10 @@ Download the latest release for your platform — no Node.js or technical setup 
 2. Double-click to open — the app starts its bundled backend automatically (the ONNX model is included in the installer, nothing to download)
 3. The Omnimind Explorer window opens with your memories
 
+**What the installer includes:** the Explorer app, a bundled Node.js runtime, the compiled backend server, the embedding model, and the native database module — nothing else to install. The backend runs as a **sidecar of the app**: it starts when the app opens and stops when the app quits (it is not a background system service).
+
+**What the installer does *not* include:** the `omnimind` command-line tool on your PATH, and the MCP server registration for AI clients (Claude Code, Cursor, Kimi Code, …). For those, install the npm package below and see [Setting up MCP clients](#setting-up-mcp-clients).
+
 > **Shared memory store:** the desktop app, the MCP server, and the CLI all read and write the **same database** at `~/.omnimind/`. Memories stored by Claude Code or Cursor show up in the app, and vice versa — no import or sync needed. Override the location for any entry point with the `OMNIMIND_DATA_DIR` environment variable.
 
 ### CLI / npm (Developers)
