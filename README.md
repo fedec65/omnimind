@@ -139,6 +139,7 @@ npm run gui:dev
 | `inject` | Print formatted context injection string for current context |
 | `status` | Show system stats and layer distribution |
 | `mine <file.md>` | Import memories from a markdown file |
+| `setup` | Register the MCP server in detected AI clients (`--client`, `--dry-run`) |
 | `bus status` | Show connected tools and bus statistics |
 | `bus sync [tool]` | Sync missed events from a specific tool |
 | `bus conflicts` | List unresolved conflicts |
@@ -199,6 +200,16 @@ Omnimind works with any MCP-compatible client. The server runs on stdio and is s
 ```bash
 npm install -g omnimind
 ```
+
+**Fastest way — auto-detect and register everything:**
+
+```bash
+omnimind setup                     # configure all detected clients
+omnimind setup --client cursor     # one client only
+omnimind setup --dry-run           # preview changes, touch nothing
+```
+
+This detects Claude Code, Cursor, Claude Desktop, and Kimi Code, and writes the MCP server entry into each client's config. The setup is idempotent and preserves your existing settings and other MCP server entries. Restart the clients afterwards. Manual configuration for each client is shown below as a fallback.
 
 > **Node.js version note:** Omnimind ships a native module (`better-sqlite3`) that is compiled for a specific Node.js ABI. Install and run the MCP server with the **same Node.js version** (e.g. install with Node 20 → run with Node 20). If you switch Node versions, run `npm rebuild better-sqlite3 -g omnimind` — otherwise the server crashes with `NODE_MODULE_VERSION` mismatch. For maximum determinism, point your client config at an explicit Node binary and the global install (see Kimi Code example below).
 

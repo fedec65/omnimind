@@ -22,6 +22,7 @@
 
 import { Omnimind } from './index.js';
 import { rebuildGraph } from './core/GraphRebuilder.js';
+import { runSetup, type McpClientId } from './setup/mcpSetup.js';
 import { homedir } from 'os';
 import { join, resolve } from 'path';
 
@@ -37,6 +38,7 @@ const commands: Record<string, (args: string[]) => Promise<void>> = {
   wipe,
   'rebuild-graph': rebuildGraphCommand,
   bus: busCommand,
+  setup: setupCommand,
 };
 
 async function main(): Promise<void> {
@@ -110,6 +112,11 @@ Commands:
     --yes                 Confirm (memories are not touched)
     --ner <engine>        NER engine: heuristic (default) or onnx
                           (multilingual model, persisted for future runs)
+
+  setup                   Register the Omnimind MCP server in AI clients
+    --client <id>         claude-code | cursor | claude-desktop | kimi
+                          (default: all detected clients)
+    --dry-run             Print what would be written, touch nothing
 
   bus status              Show connected tools and subscriptions
   bus sync [tool-id]      Pull updates from specific tool
@@ -414,6 +421,27 @@ Bus commands:
   }
 
   omni.close();
+}
+
+async function setupCommand(args: string[]): Promise<void> {
+  const clientFlag = parseFlag(args, '--client');
+  const validClients: readonly McpClientId[] = ['claude-code', 'cursor', 'claude-desktop', 'kimi'];
+  if (clientFlag !== null && !validClients.includes(clientFlag as McpClientId)) {
+    console.error(`Error: invalid --client '${clientFlag}' (expected: ${validClients.join(' | ')})`);
+    process.exit(1);
+  }
+
+  try {
+    const results = runSetup({
+      ...(clientFlag !== null ? { clients: [clientFlag as McpClientId] } : {}),
+      dryRun: args.includes('--dry-run'),
+    });
+    if (args.includes('--dry-run')) return;
+    console.log(`\nDone. Restart ${results.map((r) => r.client.name).join(', ')} to load the Omnimind tools.`);
+  } catch (error) {
+    console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
+    process.exit(1);
+  }
 }
 
 async function rebuildGraphCommand(): Promise<void> {
