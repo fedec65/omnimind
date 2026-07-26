@@ -1,0 +1,77 @@
+/**
+ * Italian language pack.
+ */
+
+export const STOPWORDS: readonly string[] = [
+  // articoli / pronomi / determinativi
+  'il', 'lo', 'la', 'i', 'gli', 'le', 'un', 'uno', 'una',
+  'questo', 'questa', 'questi', 'queste', 'quello', 'quella', 'quelli', 'quelle',
+  'io', 'tu', 'lui', 'lei', 'noi', 'voi', 'loro', 'mio', 'tuo', 'suo', 'nostro', 'vostro',
+  'ciò', 'ci', 'ne', 'si',
+  // congiunzioni / preposizioni
+  'e', 'o', 'ma', 'però', 'anche', 'pure', 'invece', 'quindi', 'dunque', 'perciò',
+  'di', 'a', 'da', 'in', 'con', 'su', 'per', 'tra', 'fra', 'del', 'dello', 'della',
+  'dei', 'degli', 'delle', 'al', 'allo', 'alla', 'ai', 'agli', 'alle', 'dal', 'dallo',
+  'dalla', 'dai', 'dagli', 'dalle', 'nel', 'nello', 'nella', 'nei', 'negli', 'nelle',
+  'sul', 'sullo', 'sulla', 'sui', 'sugli', 'sulle',
+  // avverbi discorsivi / sentence starters
+  'ora', 'adesso', 'allora', 'poi', 'dopo', 'prima', 'infine', 'finalmente',
+  'anche', 'ancora', 'già', 'mai', 'sempre', 'spesso', 'forse', 'quasi', 'circa',
+  'molto', 'poco', 'troppo', 'tanto', 'tutto', 'tutta', 'tutti', 'tutte', 'ogni',
+  'altro', 'altra', 'altri', 'altre', 'stesso', 'stessa', 'medesimo', 'medesima',
+  'bene', 'male', 'meglio', 'peggio', 'così', 'come', 'quando', 'dove', 'perché',
+  'ecco', 'infatti', 'inoltre', 'comunque', 'cioè', 'ovvero', 'ossia',
+  'certo', 'certamente', 'sicuramente', 'probabilmente', 'possibilmente',
+  'ok', 'okay', 'sì', 'no', 'grazie', 'prego', 'ciao', 'salve',
+  'perfetto', 'esatto', 'giusto', 'corretto', 'sbagliato', 'vero', 'falso',
+  'ottimo', 'eccellente', 'fantastico', 'interessante', 'notevole',
+  // verbi comuni capitalizzati a inizio frase
+  'è', 'sono', 'era', 'erano', 'essere', 'stato', 'stata', 'stati', 'state',
+  'ho', 'hai', 'ha', 'abbiamo', 'avete', 'hanno', 'avevo', 'aveva', 'avere',
+  'faccio', 'fai', 'fa', 'facciamo', 'fate', 'fanno', 'fatto', 'fare', 'facevo',
+  'devo', 'deve', 'devono', 'dovere', 'dovuto', 'dovrei', 'dovrebbe',
+  'posso', 'può', 'possono', 'potere', 'potuto', 'potrei', 'potrebbe',
+  'voglio', 'vuole', 'vogliono', 'volere', 'voluto', 'vorrei', 'vorrebbe',
+  'vedo', 'vede', 'vedere', 'visto', 'guarda', 'guardare',
+  'provo', 'prova', 'provare', 'provato', 'usare', 'usato', 'usando',
+  'inizia', 'iniziare', 'iniziato', 'inizio', 'finito', 'completato',
+  'controlla', 'controllare', 'verifica', 'verificare',
+  'serve', 'servono', 'necessario', 'necessaria', 'occorre', 'bisogna',
+  'sembra', 'sembrano', 'pare', 'risulta', 'funziona', 'funzionano',
+  // numeri / misc
+  'uno', 'due', 'tre', 'quattro', 'cinque', 'primo', 'secondo', 'terzo', 'ultimo',
+  'numero', 'parte', 'parti', 'modo', 'modi', 'maniera', 'cosa', 'cose',
+  'qualcosa', 'niente', 'nulla', 'qualcuno', 'qualcuna', 'ognuno', 'ciascuno',
+  'esempio', 'esempi', 'caso', 'casi', 'tipo', 'tipi', 'genere',
+  'vs', 'ecc', 'eccetera', 'etc',
+];
+
+export const COMMON_WORDS: readonly string[] = [
+  'tempo', 'tempi', 'giorno', 'giorni', 'settimana', 'mese', 'mesi', 'anno', 'anni',
+  'oggi', 'domani', 'ieri', 'mattina', 'pomeriggio', 'sera', 'notte', 'ora', 'minuto',
+  'persona', 'persone', 'uomo', 'donna', 'gente', 'utente', 'utenti', 'cliente', 'clienti',
+  'mondo', 'vita', 'mano', 'mani', 'occhio', 'occhi', 'testa', 'faccia',
+  'posto', 'posti', 'casa', 'stanza', 'lato', 'fine', 'inizio', 'davanti',
+  'punto', 'punti', 'linea', 'linee', 'zona', 'zone', 'livello', 'livelli',
+  'problema', 'problemi', 'questione', 'questioni', 'motivo', 'motivi', 'ragione', 'ragioni',
+  'domanda', 'domande', 'risposta', 'risposte', 'idea', 'idee',
+  'nome', 'nomi', 'parola', 'parole', 'testo', 'testi', 'documento', 'documenti',
+  'dato', 'dati', 'informazione', 'informazioni', 'valore', 'valori', 'risultato', 'risultati',
+  'stato', 'stati', 'situazione', 'situazioni', 'forma', 'forme',
+  'passo', 'passi', 'fase', 'fasi', 'processo', 'processi', 'procedura', 'procedure',
+  'sistema', 'sistemi', 'modello', 'modelli', 'modalità', 'versione', 'versioni',
+  'lavoro', 'lavori', 'compito', 'compiti', 'progetto', 'progetti', 'attività',
+  'cambio', 'cambi', 'modifica', 'modifiche', 'cambiamento', 'cambiamenti',
+  'errore', 'errori', 'avviso', 'avvisi', 'messaggio', 'messaggi',
+  'lista', 'liste', 'elenco', 'elenchi', 'elemento', 'elementi', 'voce', 'voci',
+  'opzione', 'opzioni', 'impostazione', 'impostazioni', 'configurazione',
+  'prova', 'prove', 'verifica', 'verifiche', 'controllo', 'controlli',
+  'codice', 'codici', 'sorgente', 'sorgenti', 'contenuto', 'contenuti', 'contesto', 'contesti',
+  'memoria', 'memorie', 'ricerca', 'ricerche', 'richiesta', 'richieste',
+  'fatto', 'fatti', 'corso', 'momento', 'momenti', 'senso', 'parte', 'resto',
+  'sopra', 'sotto', 'dentro', 'fuori', 'sinistra', 'destra', 'centro', 'mezzo',
+  'metà', 'intero', 'intera', 'totale', 'pieno', 'vuoto',
+  'aperto', 'chiuso', 'pubblico', 'privato', 'locale', 'remoto',
+  'predefinito', 'attuale', 'precedente', 'prossimo', 'recente', 'futuro', 'passato',
+  'seguente', 'seguenti', 'suddetto', 'suddetta', 'predetto', 'predetta',
+];

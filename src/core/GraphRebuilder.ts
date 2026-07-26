@@ -14,6 +14,10 @@ import { type MemoryStore } from './MemoryStore.js';
 import { type Memory, type Entity, type EntityType, type Result, MemoryLayer, ok, err } from './types.js';
 import { extractEntities, isPlausibleEntity, normalizeEntityName } from './EntityExtractor.js';
 import { extractRelations } from './RelationExtractor.js';
+import { mergePacks, SUPPORTED_LANGUAGES } from './ner/languagePack.js';
+
+/** Rebuilds filter with the union of all language packs — the corpus may be multilingual */
+const REBUILD_PACK = mergePacks([...SUPPORTED_LANGUAGES]);
 
 export interface RebuildReport {
   entitiesBefore: number;
@@ -76,7 +80,7 @@ export async function rebuildGraph(store: MemoryStore): Promise<Result<RebuildRe
       if (memory.layer === MemoryLayer.Concept || memory.layer === MemoryLayer.Wisdom) {
         // Original text lost — re-parse the concept summary
         const parsed = parseConceptSummary(memory.content)
-          .filter((e) => isPlausibleEntity(e.name))
+          .filter((e) => isPlausibleEntity(e.name, REBUILD_PACK))
           .filter((e) => normalizeEntityName(e.name).length >= 3);
         // Canonicalize: one entity per normalized form
         const seen = new Set<string>();

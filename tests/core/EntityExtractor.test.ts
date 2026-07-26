@@ -11,6 +11,9 @@ import {
   isPlausibleEntity,
   normalizeEntityName,
 } from '../../src/core/EntityExtractor.js';
+import { getLanguagePack } from '../../src/core/ner/languagePack.js';
+
+const EN_PACK = getLanguagePack('en');
 
 describe('EntityExtractor', () => {
   it('keeps real proper nouns and tech terms', () => {
@@ -84,10 +87,10 @@ describe('EntityExtractor', () => {
 
 describe('isPlausibleEntity', () => {
   it('rejects stopwords and short names', () => {
-    expect(isPlausibleEntity('Let')).toBe(false);
-    expect(isPlausibleEntity('the')).toBe(false);
-    expect(isPlausibleEntity('ab')).toBe(false);
-    expect(isPlausibleEntity('TaskOutput')).toBe(true);
+    expect(isPlausibleEntity('Let', EN_PACK)).toBe(false);
+    expect(isPlausibleEntity('the', EN_PACK)).toBe(false);
+    expect(isPlausibleEntity('ab', EN_PACK)).toBe(false);
+    expect(isPlausibleEntity('TaskOutput', EN_PACK)).toBe(true);
   });
 });
 

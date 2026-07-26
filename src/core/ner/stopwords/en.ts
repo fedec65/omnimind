@@ -1,16 +1,9 @@
 /**
- * Stopword lists for entity extraction.
- *
- * Two tiers:
- * - ENTITY_STOPWORDS: discourse markers and sentence starters that are
- *   capitalized at the beginning of sentences but are never real entities
- *   ("Let", "Now", "Perfect", "You" ...). Always rejected.
- * - COMMON_WORDS: high-frequency English words. A candidate made only of
- *   these is rejected even mid-sentence ("This", "There", "Time" ...).
+ * English language pack (moved from entityStopwords.ts).
  */
 
-export const ENTITY_STOPWORDS: ReadonlySet<string> = new Set([
-  // articles / determiners / pronouns (legacy list)
+export const STOPWORDS: readonly string[] = [
+  // articles / determiners / pronouns
   'the', 'a', 'an', 'this', 'that', 'these', 'those', 'it', 'its',
   'i', 'me', 'my', 'we', 'us', 'our', 'you', 'your', 'he', 'she', 'they', 'them',
   // discourse markers / sentence starters
@@ -42,13 +35,9 @@ export const ENTITY_STOPWORDS: ReadonlySet<string> = new Set([
   'one', 'two', 'three', 'number', 'part', 'way', 'thing', 'things',
   'something', 'anything', 'nothing', 'everything', 'someone', 'anyone',
   'vs', 'etc', 'eg', 'ie', 'via', 'per',
-]);
+];
 
-/**
- * High-frequency English words. A candidate consisting only of these is
- * rejected — real entities are rarely dictionary words alone.
- */
-export const COMMON_WORDS: ReadonlySet<string> = new Set([
+export const COMMON_WORDS: readonly string[] = [
   'time', 'times', 'day', 'days', 'week', 'month', 'year', 'today', 'tomorrow',
   'yesterday', 'morning', 'afternoon', 'evening', 'night', 'hour', 'minute',
   'people', 'person', 'man', 'woman', 'user', 'users', 'team', 'teams',
@@ -74,4 +63,4 @@ export const COMMON_WORDS: ReadonlySet<string> = new Set([
   'open', 'close', 'closed', 'public', 'private', 'local', 'remote',
   'default', 'current', 'previous', 'latest', 'recent', 'future', 'past',
   'following', 'above', 'below', 'between', 'inside', 'outside',
-]);
+];

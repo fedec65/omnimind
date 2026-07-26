@@ -107,3 +107,50 @@ describe('RelationExtractor — noise dampening', () => {
     expect(relations.length).toBe(21); // C(7,2)
   });
 });
+
+describe('RelationExtractor — per-language verb patterns', () => {
+  const makeEntity = (name: string, type: string = 'concept'): Entity => ({
+    id: `entity_${name.toLowerCase()}`,
+    name,
+    type: type as Entity['type'],
+    description: null,
+    firstSeen: 0,
+    lastSeen: 0,
+    mentionCount: 1,
+  });
+
+  it('extracts Italian patterns with canonical English predicates', () => {
+    const entities = [makeEntity('App'), makeEntity('Redis')];
+    const relations = extractRelations('La App usa Redis per il caching.', entities, undefined, { language: 'it' });
+
+    const uses = relations.find(r => r.predicate === 'uses');
+    expect(uses).toBeDefined();
+    expect(uses!.subjectId).toBe('entity_app');
+    expect(uses!.objectId).toBe('entity_redis');
+  });
+
+  it('extracts Italian depends_on', () => {
+    const entities = [makeEntity('Modulo'), makeEntity('Database')];
+    const relations = extractRelations('Il Modulo dipende da Database.', entities, undefined, { language: 'it' });
+
+    const dep = relations.find(r => r.predicate === 'depends_on');
+    expect(dep).toBeDefined();
+  });
+
+  it('auto-detects the language when no option is passed', () => {
+    const entities = [makeEntity('App'), makeEntity('Redis')];
+    // Italian function words dominate → Italian patterns selected
+    const relations = extractRelations(
+      'Il sistema usa il cache e la App usa Redis per il lavoro del cliente con il server.',
+      entities,
+    );
+    const uses = relations.filter(r => r.predicate === 'uses');
+    expect(uses.length).toBeGreaterThan(0);
+  });
+
+  it('mixed language runs all patterns', () => {
+    const entities = [makeEntity('App'), makeEntity('Redis')];
+    const relations = extractRelations('La App usa Redis per il caching del sistema.', entities, undefined, { language: 'mixed' });
+    expect(relations.find(r => r.predicate === 'uses')).toBeDefined();
+  });
+});
