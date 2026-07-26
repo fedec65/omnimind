@@ -142,6 +142,10 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
         sendJson(res, 500, { error: result.error.message });
         return;
       }
+      // Feed prediction learning: GUI usage counts as context access too
+      for (const r of result.value.slice(0, 5)) {
+        omni!.activityTracker.recordMemoryAccess(r.memory.id);
+      }
       sendJson(res, 200, { memories: result.value });
       return;
     }
@@ -162,6 +166,8 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
         sendJson(res, 500, { error: result.error.message });
         return;
       }
+      // Feed prediction learning: storing in this context is a signal
+      omni!.activityTracker.recordMemoryAccess(result.value.id);
       sendJson(res, 201, { memory: result.value });
       return;
     }
@@ -182,6 +188,8 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
         sendJson(res, 404, { error: 'Memory not found' });
         return;
       }
+      // Feed prediction learning: reading a memory is an access
+      omni!.activityTracker.recordMemoryAccess(id);
       sendJson(res, 200, { memory: result.value });
       return;
     }
@@ -231,6 +239,10 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
     if (!result.ok) {
       sendJson(res, 500, { error: result.error.message });
       return;
+    }
+    // Feed prediction learning: record top search hits as context accesses
+    for (const r of result.value.slice(0, 5)) {
+      omni!.activityTracker.recordMemoryAccess(r.memory.id);
     }
     sendJson(res, 200, { results: result.value });
     return;
