@@ -35,6 +35,7 @@ import { MemoryStore } from '../core/MemoryStore.js';
 import { IntentPredictor, buildFingerprint } from '../prediction/IntentPredictor.js';
 import { MemoryBus } from '../bus/MemoryBus.js';
 import { Omnimind } from '../index.js';
+import { getNerEngineInfo } from '../core/ner/NerEngine.js';
 import { EventType } from '../bus/types.js';
 import { join } from 'path';
 import { homedir } from 'os';
@@ -741,6 +742,10 @@ export class OmnimindMcpServer {
 
     const predStats = this.predictor.getStats();
     const busStats = this.bus.getStats();
+    const ner = getNerEngineInfo();
+    const nerDetail = ner.configured === 'onnx'
+      ? ner.modelLoaded ? 'onnx (multilingual model)' : 'heuristic (onnx unavailable, fallback)'
+      : 'heuristic';
 
     return {
       content: [
@@ -756,6 +761,7 @@ export class OmnimindMcpServer {
             layerInfo,
             `Database size: ${(s.databaseSizeBytes / 1024 / 1024).toFixed(1)} MB`,
             `Predictor patterns: ${predStats.totalPatterns} across ${predStats.uniqueContexts} contexts`,
+            `NER engine: ${nerDetail}`,
             ``,
             `Bus:`,
             `  Adapters: ${busStats.adapterCount}`,

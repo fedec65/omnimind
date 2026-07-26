@@ -33,7 +33,7 @@ const MAX_ENTITIES = 15;
 const escapeRegExp = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 /** Resolve the active language pack for a text + options */
-function resolvePack(text: string, opts?: ExtractOptions): { pack: LanguagePack; detected: DetectedLanguage | string } {
+export function resolvePack(text: string, opts?: ExtractOptions): { pack: LanguagePack; detected: DetectedLanguage | string } {
   const requested = opts?.language ?? 'auto';
   if (requested === 'mixed' || requested === 'non-latin') {
     return { pack: mergePacks([...SUPPORTED_LANGUAGES]), detected: requested };

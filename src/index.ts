@@ -70,6 +70,7 @@ import {
   err,
 } from './core/types.js';
 import { extractRelations } from './core/RelationExtractor.js';
+import { configureNerEngine, getNerEngineInfo, initNerEngine, type NerEngineInfo } from './core/ner/NerEngine.js';
 import { type Prediction } from './prediction/IntentPredictor.js';
 
 // ─── Configuration ────────────────────────────────────────────────
@@ -80,6 +81,12 @@ export interface OmnimindConfig {
   modelPath?: string | undefined;
   /** Register cross-tool bus adapters (Claude, Cursor, ChatGPT). Default: true. */
   adapters?: boolean | undefined;
+  /**
+   * NER engine for concept extraction: 'heuristic' (default, zero-download)
+   * or 'onnx' (multilingual model, ~178MB downloaded on first use, with
+   * automatic fallback to heuristic). Overrides the persisted nerEngine setting.
+   */
+  nerEngine?: 'heuristic' | 'onnx' | undefined;
 }
 
 // ─── Main API ─────────────────────────────────────────────────────
@@ -134,6 +141,17 @@ export class Omnimind {
     const result = await store.init();
     if (!result.ok) {
       throw new Error(`Failed to initialize Omnimind: ${result.error.message}`);
+    }
+
+    // Configure the NER engine (heuristic by default; 'onnx' loads the
+    // multilingual model with automatic heuristic fallback). Explicit
+    // config wins over the persisted setting.
+    const nerSetting = store.getSetting('nerEngine');
+    const nerEngine = config.nerEngine
+      ?? (nerSetting.ok && nerSetting.value === 'onnx' ? 'onnx' : 'heuristic');
+    configureNerEngine(nerEngine);
+    if (nerEngine === 'onnx') {
+      await initNerEngine();
     }
 
     // Initialize prediction with persistence
@@ -725,6 +743,11 @@ export class Omnimind {
     return this.memoryStore.setSetting(key, value);
   }
 
+  /** Report which NER engine is configured and which one is serving */
+  getNerEngineInfo(): NerEngineInfo {
+    return getNerEngineInfo();
+  }
+
   /** Close all resources */
   close(): void {
     this.activityTracker.stop();
@@ -755,4 +778,5 @@ export type {
   StoreStats,
   Result,
   Prediction,
+  NerEngineInfo,
 };

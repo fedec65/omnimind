@@ -21,7 +21,7 @@ import {
   ok,
   err,
 } from '../core/types.js';
-import { extractEntities } from '../core/EntityExtractor.js';
+import { extractEntitiesAsync } from '../core/ner/NerEngine.js';
 
 /** Compression rule for shorthand transformation */
 interface CompressionRule {
@@ -190,13 +190,14 @@ export class AgingPipeline {
 
   /**
    * L1 → L2: Extract entities and relations to knowledge graph.
-   * 
-   * Uses simple heuristics for entity extraction (zero LLM calls).
-   * Stores concept references instead of full text.
+   *
+   * Uses the configured NER engine (heuristic by default, multilingual
+   * ONNX model when enabled via the nerEngine setting — zero LLM calls
+   * either way). Stores concept references instead of full text.
    */
-  private extractToL2(memory: Memory): Result<Memory> {
-    // Extract potential entities via the heuristic NER (EntityExtractor)
-    const entities = extractEntities(memory.content);
+  private async extractToL2(memory: Memory): Promise<Result<Memory>> {
+    // Extract potential entities via the active NER engine
+    const entities = await extractEntitiesAsync(memory.content);
 
     // Create a concept summary
     const conceptSummary = entities.length > 0

@@ -93,6 +93,8 @@ export type EntityType =
   | 'function'
   | 'database'
   | 'service'
+  | 'organization'
+  | 'location'
   | 'unknown';
 
 /** Relation between two entities */

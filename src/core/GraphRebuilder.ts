@@ -13,11 +13,21 @@
 import { type MemoryStore } from './MemoryStore.js';
 import { type Memory, type Entity, type EntityType, type Result, MemoryLayer, ok, err } from './types.js';
 import { extractEntities, isPlausibleEntity, normalizeEntityName } from './EntityExtractor.js';
+import { configureNerEngine, extractEntitiesAsync, initNerEngine, type NerEngineKind } from './ner/NerEngine.js';
 import { extractRelations } from './RelationExtractor.js';
 import { mergePacks, SUPPORTED_LANGUAGES } from './ner/languagePack.js';
 
 /** Rebuilds filter with the union of all language packs — the corpus may be multilingual */
 const REBUILD_PACK = mergePacks([...SUPPORTED_LANGUAGES]);
+
+export interface RebuildOptions {
+  /**
+   * NER engine for re-extracting entities from L0/L1 full text.
+   * 'heuristic' (default) or 'onnx' (multilingual model, loaded on demand
+   * with automatic fallback to heuristic if unavailable).
+   */
+  ner?: NerEngineKind | undefined;
+}
 
 export interface RebuildReport {
   entitiesBefore: number;
@@ -45,8 +55,14 @@ function parseConceptSummary(content: string): Array<{ name: string; type: strin
 /**
  * Wipe and rebuild the knowledge graph. The store must be initialized.
  */
-export async function rebuildGraph(store: MemoryStore): Promise<Result<RebuildReport>> {
+export async function rebuildGraph(store: MemoryStore, opts?: RebuildOptions): Promise<Result<RebuildReport>> {
   try {
+    if (opts?.ner === 'onnx') {
+      configureNerEngine('onnx');
+      await initNerEngine(); // falls back to heuristic if the model is unavailable
+    }
+    const useAsyncNer = opts?.ner === 'onnx';
+
     const entBefore = store.queryEntities({ limit: 1_000_000 });
     const relBefore = store.queryRelations({ limit: 1_000_000 });
     const entitiesBefore = entBefore.ok ? entBefore.value.length : 0;
@@ -101,7 +117,10 @@ export async function rebuildGraph(store: MemoryStore): Promise<Result<RebuildRe
         }
       } else {
         // Full text available — re-extract with the current NER
-        entities = extractEntities(memory.content).map((e) => ({
+        const extracted = useAsyncNer
+          ? await extractEntitiesAsync(memory.content)
+          : extractEntities(memory.content);
+        entities = extracted.map((e) => ({
           id: e.id,
           name: e.name,
           type: e.type as EntityType,

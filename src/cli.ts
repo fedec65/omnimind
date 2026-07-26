@@ -108,6 +108,8 @@ Commands:
 
   rebuild-graph           Wipe and re-derive the knowledge graph (!)
     --yes                 Confirm (memories are not touched)
+    --ner <engine>        NER engine: heuristic (default) or onnx
+                          (multilingual model, persisted for future runs)
 
   bus status              Show connected tools and subscriptions
   bus sync [tool-id]      Pull updates from specific tool
@@ -284,6 +286,12 @@ async function status(): Promise<void> {
       console.log(`  ${layerNames[Number(layer)]}: ${count}`);
     }
     console.log(`Database size: ${(s.databaseSizeBytes / 1024 / 1024).toFixed(2)} MB`);
+
+    const ner = omni.getNerEngineInfo();
+    const nerDetail = ner.configured === 'onnx'
+      ? ner.modelLoaded ? 'onnx (multilingual model)' : 'heuristic (onnx unavailable, fallback)'
+      : 'heuristic';
+    console.log(`NER engine: ${nerDetail}`);
   } else {
     console.error(`Error: ${result.error.message}`);
   }
@@ -416,13 +424,25 @@ async function rebuildGraphCommand(): Promise<void> {
     process.exit(1);
   }
 
+  const nerFlag = parseFlag(process.argv, '--ner');
+  if (nerFlag !== null && nerFlag !== 'heuristic' && nerFlag !== 'onnx') {
+    console.error(`Error: invalid --ner engine '${nerFlag}' (expected: heuristic | onnx)`);
+    process.exit(1);
+  }
+  const ner = (nerFlag ?? 'heuristic') as 'heuristic' | 'onnx';
+
   const omni = await Omnimind.create({
     adapters: false,
     dataDir: process.env.OMNIMIND_DATA_DIR ?? undefined,
   });
 
-  console.log('Rebuilding knowledge graph...');
-  const result = await rebuildGraph(omni.memoryStore);
+  // Persist the engine choice so future runs (server, MCP, GUI) use it too
+  if (nerFlag !== null) {
+    omni.setSetting('nerEngine', ner);
+  }
+
+  console.log(`Rebuilding knowledge graph (NER: ${ner})...`);
+  const result = await rebuildGraph(omni.memoryStore, { ner });
   if (!result.ok) {
     console.error(`Error: ${result.error.message}`);
     omni.close();

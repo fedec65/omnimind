@@ -148,7 +148,24 @@ Patterns build up automatically as you search and store — no training step nee
 
 ## 8. Multi-language notes
 
-The concept extractor auto-detects English, Italian, French, German, Spanish, and Portuguese per memory (function-word voting) and applies the matching language pack. Mixed-language texts use a merged pack. Non-Latin scripts degrade gracefully (quoted-string extraction only) until the planned multilingual ONNX NER lands.
+The concept extractor works in two engines, both 100% local:
+
+- **Heuristic (default)** — zero-download rule-based extractor. Auto-detects English, Italian, French, German, Spanish, and Portuguese per memory (function-word voting) and applies the matching language pack. Mixed-language texts use a merged pack. Non-Latin scripts degrade gracefully (quoted-string extraction only).
+- **ONNX model (opt-in)** — a multilingual NER model (`bert-base-multilingual-cased-ner-hrl`, ~178MB, downloaded once on first use) covering 10 languages: Arabic, German, English, Spanish, French, Italian, Dutch, Polish, Portuguese, Russian, and Chinese. It recognizes people, organizations, and locations with much higher recall than the heuristic.
+
+### Enabling the ONNX NER engine
+
+```bash
+# One-off: rebuild the graph with the ONNX engine (also persists the choice)
+omnimind rebuild-graph --ner onnx --yes
+
+# Pre-download the model at install time
+OMNIMIND_NER=onnx npm install
+```
+
+The choice is stored in the `nerEngine` setting, so the HTTP server, the MCP server, and the GUI pick it up on their next start. Check which engine is active with `omnimind status` (CLI) or `omnimind_status` (MCP). If the model cannot be loaded (offline first run, not enough memory), Omnimind automatically falls back to the heuristic — extraction never breaks.
+
+Both engines produce the same canonical entity ids (`entity_<normalized name>`), so the knowledge graph merges entities regardless of which engine extracted them.
 
 ---
 
