@@ -6,6 +6,8 @@
 
 Omnimind is a local memory engine that stores, searches, predicts, and visualizes relevant context across your AI tools (Claude Code, Cursor, ChatGPT, etc.) via the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/). It runs entirely on your machine: embeddings, search, compression, and encryption are all local.
 
+📖 **[Usage Guide — docs/USAGE.md](docs/USAGE.md)** — how to store, search, and organize memories via agents, GUI, CLI, and API.
+
 ## Why Omnimind?
 
 | | Traditional Memory | **Omnimind** |
