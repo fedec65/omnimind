@@ -29,6 +29,14 @@ import { resolve, extname } from 'path';
 import { fileURLToPath } from 'url';
 import { Omnimind } from './index.js';
 import { type EntityType } from './core/types.js';
+import {
+  runSetup,
+  getClientsStatus,
+  buildExplicitEntry,
+  MCP_CLIENTS,
+  type McpClientId,
+} from './setup/mcpSetup.js';
+import { installCliWrapper, isCliInstalled } from './setup/installCli.js';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const STATIC_DIR = resolve(__dirname, '../gui/dist');
@@ -384,6 +392,62 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
       sendJson(res, 200, { ok: true });
       return;
     }
+  }
+
+  // MCP client setup (Connect AI tools)
+  if (path === '/api/setup/clients' && method === 'GET') {
+    const cliTargets = process.env.OMNIMIND_CLI_TARGETS?.split(':');
+    sendJson(res, 200, {
+      clients: getClientsStatus(),
+      cli: { installed: isCliInstalled(cliTargets ? { targets: cliTargets } : {}) },
+    });
+    return;
+  }
+
+  if (path === '/api/setup/register' && method === 'POST') {
+    const body = await readBody(req);
+    const requested = body.clients as string[] | undefined;
+    const validIds = new Set(MCP_CLIENTS.map((c) => c.id));
+    const invalid = (requested ?? []).filter((id) => !validIds.has(id as McpClientId));
+    if (invalid.length > 0) {
+      sendJson(res, 400, { error: `Unknown clients: ${invalid.join(', ')}` });
+      return;
+    }
+
+    // Explicit entry: this server's own Node binary + bundled mcp-server.js,
+    // so no npm/npx install is required (works for DMG users).
+    const entry = buildExplicitEntry(
+      process.execPath,
+      resolve(__dirname, 'mcp-server.js'),
+    );
+    try {
+      const results = runSetup({
+        ...(requested !== undefined ? { clients: requested as McpClientId[] } : {}),
+        entry,
+      });
+      sendJson(res, 200, {
+        registered: results.map((r) => ({ id: r.client.id, name: r.client.name, path: r.path })),
+        clients: getClientsStatus(),
+      });
+    } catch (error) {
+      sendJson(res, 400, { error: error instanceof Error ? error.message : String(error) });
+    }
+    return;
+  }
+
+  if (path === '/api/setup/install-cli' && method === 'POST') {
+    const cliTargets = process.env.OMNIMIND_CLI_TARGETS?.split(':');
+    const result = installCliWrapper({
+      nodePath: process.execPath,
+      cliPath: resolve(__dirname, 'cli.js'),
+      ...(cliTargets ? { targets: cliTargets } : {}),
+    });
+    if (result.ok) {
+      sendJson(res, 200, { ok: true, path: result.path });
+    } else {
+      sendJson(res, 400, { error: result.error });
+    }
+    return;
   }
 
   // Bus status

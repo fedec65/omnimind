@@ -11,10 +11,14 @@ import { tmpdir } from 'node:os';
 import { Writable } from 'node:stream';
 import {
   buildEntry,
+  buildExplicitEntry,
   detectClients,
+  getClientsStatus,
+  isClientConfigured,
   mergeMcpServers,
   parseConfig,
   runSetup,
+  getClient,
   MCP_CLIENTS,
 } from '../../src/setup/mcpSetup.js';
 
@@ -154,5 +158,47 @@ describe('runSetup', () => {
     runSetup({ home, clients: ['cursor'], out });
     const mode = statSync(join(home, '.cursor', 'mcp.json')).mode & 0o777;
     expect(mode).toBe(0o600);
+  });
+
+  it('uses a custom entry when provided (explicit node + script)', () => {
+    const entry = buildExplicitEntry('/app/Resources/node/bin/node', '/app/Resources/dist/mcp-server.js');
+    runSetup({ home, clients: ['cursor'], entry, out });
+    const cfg = JSON.parse(readFileSync(join(home, '.cursor', 'mcp.json'), 'utf8'));
+    expect(cfg.mcpServers.omnimind).toEqual(entry);
+  });
+});
+
+describe('buildExplicitEntry', () => {
+  it('points at the given node binary and script', () => {
+    expect(buildExplicitEntry('/n/node', '/s/mcp-server.js')).toEqual({
+      command: '/n/node',
+      args: ['/s/mcp-server.js'],
+    });
+  });
+});
+
+describe('isClientConfigured', () => {
+  it('is false when the config file does not exist', () => {
+    expect(isClientConfigured(getClient('cursor'), home, 'darwin')).toBe(false);
+  });
+
+  it('is true once the omnimind entry is present', () => {
+    runSetup({ home, clients: ['cursor'], out });
+    expect(isClientConfigured(getClient('cursor'), home, 'darwin')).toBe(true);
+  });
+});
+
+describe('getClientsStatus', () => {
+  it('reports detected and configured flags per client', () => {
+    mkdirSync(join(home, '.claude'), { recursive: true });
+    runSetup({ home, clients: ['kimi'], out });
+
+    const status = getClientsStatus(home, 'darwin');
+    const byId = new Map(status.map((s) => [s.id, s]));
+
+    expect(byId.get('claude-code')).toMatchObject({ detected: true, configured: false });
+    expect(byId.get('kimi')).toMatchObject({ detected: true, configured: true });
+    expect(byId.get('cursor')).toMatchObject({ detected: false, configured: false });
+    expect(byId.get('claude-desktop')?.configPath).toContain('Library/Application Support/Claude');
   });
 });

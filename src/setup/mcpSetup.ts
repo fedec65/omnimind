@@ -93,6 +93,15 @@ export function buildEntry(): McpServerEntry {
 }
 
 /**
+ * Entry that points at an explicit Node binary + server script, with no
+ * npm/npx requirement. Used by the desktop app (bundled Node + dist) so
+ * DMG users get a working registration without installing the CLI.
+ */
+export function buildExplicitEntry(nodePath: string, scriptPath: string): McpServerEntry {
+  return { command: nodePath, args: [scriptPath] };
+}
+
+/**
  * Parse a client config JSON string. Tolerant: returns {} for empty
  * input or malformed JSON so a half-written existing file does not
  * block setup.
@@ -127,6 +136,41 @@ export function detectClients(
   });
 }
 
+/** Whether the client's config already contains the Omnimind MCP entry */
+export function isClientConfigured(
+  client: McpClient,
+  home: string = homedir(),
+  platform: NodeJS.Platform = process.platform,
+): boolean {
+  const path = client.configPath(home, platform);
+  if (!existsSync(path)) return false;
+  const config = parseConfig(readFileSync(path, 'utf8'));
+  return config.mcpServers?.omnimind !== undefined;
+}
+
+export interface ClientStatus {
+  readonly id: McpClientId;
+  readonly name: string;
+  readonly detected: boolean;
+  readonly configured: boolean;
+  readonly configPath: string;
+}
+
+/** Detection + registration status for every supported client */
+export function getClientsStatus(
+  home: string = homedir(),
+  platform: NodeJS.Platform = process.platform,
+): ClientStatus[] {
+  const detected = new Set(detectClients(home, platform).map((c) => c.id));
+  return MCP_CLIENTS.map((client) => ({
+    id: client.id,
+    name: client.name,
+    detected: detected.has(client.id),
+    configured: isClientConfigured(client, home, platform),
+    configPath: client.configPath(home, platform),
+  }));
+}
+
 export interface SetupResult {
   readonly client: McpClient;
   readonly path: string;
@@ -141,6 +185,8 @@ export interface SetupOptions {
   platform?: NodeJS.Platform | undefined;
   /** Print the would-be writes without touching disk */
   dryRun?: boolean | undefined;
+  /** Custom server entry (default: npx-based, see buildExplicitEntry for the app) */
+  entry?: McpServerEntry | undefined;
   out?: NodeJS.WritableStream | undefined;
 }
 
@@ -153,6 +199,7 @@ export function runSetup(opts: SetupOptions = {}): SetupResult[] {
   const home = opts.home ?? homedir();
   const platform = opts.platform ?? process.platform;
   const dryRun = opts.dryRun ?? false;
+  const entry = opts.entry ?? buildEntry();
   const out = opts.out ?? process.stdout;
 
   const selected = opts.clients !== undefined
@@ -169,7 +216,7 @@ export function runSetup(opts: SetupOptions = {}): SetupResult[] {
   for (const client of selected) {
     const path = client.configPath(home, platform);
     const existing = existsSync(path) ? readFileSync(path, 'utf8') : '';
-    const merged = mergeMcpServers(parseConfig(existing), buildEntry());
+    const merged = mergeMcpServers(parseConfig(existing), entry);
     const serialized = JSON.stringify(merged, null, 2) + '\n';
 
     if (dryRun) {

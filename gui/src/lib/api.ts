@@ -112,6 +112,24 @@ export interface BusStats {
   deadLetterCount: number;
 }
 
+export interface McpClientStatus {
+  id: 'claude-code' | 'cursor' | 'claude-desktop' | 'kimi';
+  name: string;
+  detected: boolean;
+  configured: boolean;
+  configPath: string;
+}
+
+export interface SetupClientsResponse {
+  clients: McpClientStatus[];
+  cli: { installed: string | null };
+}
+
+export interface RegisterResponse {
+  registered: Array<{ id: string; name: string; path: string }>;
+  clients: McpClientStatus[];
+}
+
 export interface SystemStats {
   store: {
     totalMemories: number;
@@ -283,4 +301,16 @@ export const api = {
     }),
 
   conflicts: () => fetchJson<{ conflicts: Array<{ resolution: string; winningEvent: { sourceTool: string; payload: { wing?: string; content?: string } }; losingEvent: { sourceTool: string; payload: { wing?: string; content?: string } }; explanation: string }> }>('/api/bus/conflicts'),
+
+  setupClients: () => fetchJson<SetupClientsResponse>('/api/setup/clients'),
+
+  registerMcpClients: (clients?: string[]) =>
+    fetchJson<RegisterResponse>('/api/setup/register', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(clients ? { clients } : {}),
+    }),
+
+  installCli: () =>
+    fetchJson<{ ok: boolean; path?: string }>('/api/setup/install-cli', { method: 'POST' }),
 };

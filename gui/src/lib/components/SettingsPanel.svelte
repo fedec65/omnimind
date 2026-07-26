@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { api } from '../api';
+  import { api, type McpClientStatus } from '../api';
   import { appState, setError } from '../stores.svelte.ts';
 
   let isLoading = $state(true);
@@ -10,6 +10,12 @@
   let isAging = $state(false);
   let isEvicting = $state(false);
   let actionMsg = $state<string | null>(null);
+
+  let mcpClients = $state<McpClientStatus[]>([]);
+  let cliInstalled = $state<string | null>(null);
+  let isRegistering = $state(false);
+  let isInstallingCli = $state(false);
+  let connectMsg = $state<string | null>(null);
 
   let settings = $state<Record<string, string>>({});
   let form = $state({
@@ -35,7 +41,48 @@
     } finally {
       isLoading = false;
     }
+    await loadSetupStatus();
   });
+
+  async function loadSetupStatus() {
+    try {
+      const status = await api.setupClients();
+      mcpClients = status.clients;
+      cliInstalled = status.cli.installed;
+    } catch {
+      // Sidecar too old to expose setup endpoints — hide the section
+      mcpClients = [];
+    }
+  }
+
+  async function handleRegister(clientIds?: string[]) {
+    isRegistering = true;
+    connectMsg = null;
+    try {
+      const result = await api.registerMcpClients(clientIds);
+      mcpClients = result.clients;
+      const names = result.registered.map((r) => r.name).join(', ');
+      connectMsg = `Registered in ${names}. Restart the client(s) to load the Omnimind tools.`;
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'MCP registration failed');
+    } finally {
+      isRegistering = false;
+    }
+  }
+
+  async function handleInstallCli() {
+    isInstallingCli = true;
+    connectMsg = null;
+    try {
+      const result = await api.installCli();
+      cliInstalled = result.path ?? null;
+      connectMsg = `omnimind command installed at ${result.path}`;
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'CLI install failed');
+    } finally {
+      isInstallingCli = false;
+    }
+  }
 
   async function save() {
     isSaving = true;
@@ -230,6 +277,65 @@
           </div>
         </div>
       </section>
+
+      <!-- Connect AI Tools -->
+      {#if mcpClients.length > 0}
+        <section class="bg-[var(--surface)] rounded-xl p-6 border border-[var(--border)]">
+          <h3 class="text-sm font-medium text-[var(--text-muted)] uppercase tracking-wider mb-4">Connect AI Tools</h3>
+          <p class="text-xs text-[var(--text-muted)] mb-4">
+            Register the Omnimind MCP server in your AI clients so they can store and search memories.
+            No npm install needed — the registration points at this app's bundled backend.
+          </p>
+          <div class="space-y-3">
+            {#each mcpClients as client (client.id)}
+              <div class="flex items-center justify-between">
+                <div class="flex items-center gap-2">
+                  <span class="text-sm text-[var(--text)]">{client.name}</span>
+                  {#if !client.detected}
+                    <span class="text-xs px-2 py-0.5 rounded-full bg-[var(--border)] text-[var(--text-muted)]">not installed</span>
+                  {:else if client.configured}
+                    <span class="text-xs px-2 py-0.5 rounded-full bg-green-500/15 text-green-400">connected</span>
+                  {:else}
+                    <span class="text-xs px-2 py-0.5 rounded-full bg-yellow-500/15 text-yellow-400">detected</span>
+                  {/if}
+                </div>
+                {#if client.detected}
+                  <button
+                    onclick={() => handleRegister([client.id])}
+                    disabled={isRegistering}
+                    class="px-3 py-1.5 text-xs bg-[var(--surface)] border border-[var(--border)] rounded-lg hover:bg-[var(--surface-hover)] transition-colors disabled:opacity-50"
+                  >
+                    {client.configured ? 'Re-register' : 'Connect'}
+                  </button>
+                {/if}
+              </div>
+            {/each}
+          </div>
+          <div class="flex flex-wrap items-center gap-3 mt-4">
+            <button
+              onclick={() => handleRegister()}
+              disabled={isRegistering || !mcpClients.some((c) => c.detected)}
+              class="px-4 py-2 bg-[var(--accent)] text-white text-sm font-medium rounded-lg hover:opacity-90 transition-opacity disabled:opacity-50"
+            >
+              {isRegistering ? 'Connecting...' : 'Connect All Detected'}
+            </button>
+            {#if cliInstalled}
+              <span class="text-xs text-[var(--text-muted)]">CLI installed: {cliInstalled}</span>
+            {:else}
+              <button
+                onclick={handleInstallCli}
+                disabled={isInstallingCli}
+                class="px-4 py-2 bg-[var(--surface)] border border-[var(--border)] text-sm rounded-lg hover:bg-[var(--surface-hover)] transition-colors disabled:opacity-50"
+              >
+                {isInstallingCli ? 'Installing...' : 'Install omnimind Command'}
+              </button>
+            {/if}
+          </div>
+          {#if connectMsg}
+            <p class="text-sm text-green-400 mt-3">{connectMsg}</p>
+          {/if}
+        </section>
+      {/if}
 
       <!-- Data Management -->
       <section class="bg-[var(--surface)] rounded-xl p-6 border border-[var(--border)]">
