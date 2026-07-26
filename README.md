@@ -75,7 +75,7 @@ Download the latest release for your platform — no Node.js or technical setup 
 | **Windows** | `.msi` installer | ~175 MB |
 | **Linux** (Ubuntu/Debian) | `.deb` package | ~400 MB |
 
-📦 **[Download v0.6.8](https://github.com/fedec65/omnimind/releases/latest)**
+📦 **[Download v0.7.0](https://github.com/fedec65/omnimind/releases/latest)**
 
 **First launch:**
 1. Install the app (drag to Applications on macOS, run the installer on Windows, or `dpkg -i` on Linux)
@@ -399,8 +399,10 @@ See [ROADMAP.md](ROADMAP.md) for the full phased plan.
 **Completed (v0.6.8):**
 - ✅ Heuristic NER for concept extraction (stoplist + sentence-initial discount + canonicalization), graph noise dampening, `omnimind rebuild-graph`
 
+**Completed (v0.7.0):**
+- ✅ Optional multilingual ONNX NER engine (`bert-base-multilingual-cased-ner-hrl`, 10 languages, local via `@xenova/transformers`) with automatic heuristic fallback — person/organization/location extraction
+
 **Upcoming:**
-- ONNX-based NER model (local, `@xenova/transformers`) as optional upgrade
 - MCP polish (auto-save hooks)
 - P2P encrypted sync
 - Team memory spaces
