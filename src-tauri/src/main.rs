@@ -2,6 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::net::TcpListener;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 use tauri::Manager;
@@ -72,6 +73,38 @@ fn start_node_server(handle: &tauri::AppHandle) -> (Option<Child>, String) {
     (None, String::new())
 }
 
+/// Recursively copy a directory (std-only, no extra crates).
+fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dst)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let target = dst.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            copy_dir_recursive(&entry.path(), &target)?;
+        } else {
+            std::fs::copy(entry.path(), &target)?;
+        }
+    }
+    Ok(())
+}
+
+/// The bundled .cache is read-only inside the installed app, so models that
+/// download later (e.g. the optional 178MB NER model) cannot be stored
+/// there. On first run, copy the bundled cache into the writable data dir
+/// and point transformers.js at the copy. Falls back to the bundled cache
+/// when the copy is not possible.
+fn writable_transformers_cache(resource_dir: &Path, data_dir: &Path) -> PathBuf {
+    let writable = data_dir.join(".cache");
+    if writable.exists() {
+        return writable;
+    }
+    let bundled = resource_dir.join(".cache");
+    if bundled.exists() && copy_dir_recursive(&bundled, &writable).is_ok() {
+        return writable;
+    }
+    bundled
+}
+
 fn try_start_bundled_server(handle: &tauri::AppHandle) -> Option<(Child, u16)> {
     let resource_dir = handle.path().resource_dir().ok()?;
 
@@ -102,7 +135,7 @@ fn try_start_bundled_server(handle: &tauri::AppHandle) -> Option<(Child, u16)> {
     // Ensure data directory exists
     let _ = std::fs::create_dir_all(&data_dir);
 
-    let transformers_cache = resource_dir.join(".cache");
+    let transformers_cache = writable_transformers_cache(&resource_dir, &data_dir);
 
     let child = Command::new(&node_binary)
         .arg(&server_script)

@@ -73,10 +73,11 @@ const DATA_DIR = process.env.OMNIMIND_DATA_DIR;
 
 let omni: Omnimind | null = null;
 let serverPort = 0;
+/** Current initialization phase: 'boot' → 'store' → 'bus' → 'ready' (or 'failed') */
+let initPhase = 'boot';
 
 async function main(): Promise<void> {
   const skipAdapters = process.env.OMNIMIND_SKIP_ADAPTERS === '1';
-  omni = await Omnimind.create({ dataDir: DATA_DIR, adapters: !skipAdapters });
 
   const server = createServer((req, res) => {
     // CORS for Tauri origin
@@ -96,6 +97,9 @@ async function main(): Promise<void> {
     });
   });
 
+  // Listen immediately: /api/health reports the initialization phase while
+  // the engine loads, so the GUI can show meaningful progress instead of a
+  // dead "waiting for server" screen.
   server.listen(PORT, () => {
     const addr = server.address();
     if (addr && typeof addr === 'object') {
@@ -107,6 +111,23 @@ async function main(): Promise<void> {
       }
     }
   });
+
+  // Initialize the engine in the background; /api/health reports progress.
+  Omnimind.create({
+    dataDir: DATA_DIR,
+    adapters: !skipAdapters,
+    onProgress: (phase) => {
+      initPhase = phase;
+    },
+  })
+    .then((instance) => {
+      omni = instance;
+      initPhase = 'ready';
+    })
+    .catch((error) => {
+      console.error('[Server] Initialization failed:', error);
+      initPhase = 'failed';
+    });
 
   // Graceful shutdown
   process.on('SIGTERM', () => shutdown(server));
@@ -144,7 +165,20 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
 
   // Health check
   if (path === '/api/health' && method === 'GET') {
-    sendJson(res, 200, { status: 'ok', version: VERSION });
+    if (omni === null) {
+      sendJson(res, 200, {
+        status: initPhase === 'failed' ? 'failed' : 'starting',
+        phase: initPhase,
+      });
+      return;
+    }
+    sendJson(res, 200, { status: 'ok', version: VERSION, phase: 'ready' });
+    return;
+  }
+
+  // Engine still initializing: every other API endpoint waits for ready
+  if (omni === null) {
+    sendJson(res, 503, { error: 'Server is still starting', phase: initPhase });
     return;
   }
 

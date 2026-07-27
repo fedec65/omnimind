@@ -152,7 +152,7 @@ async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  health: () => fetchJson<{ status: string; version: string }>('/api/health'),
+  health: () => fetchJson<{ status: string; version?: string; phase?: string }>('/api/health'),
 
   search: (q: string, limit = 20, namespaces?: string[], from?: number, to?: number) => {
     const params = new URLSearchParams();

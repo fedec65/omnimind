@@ -14,20 +14,41 @@
 
   let serverReady = $state(false);
   let version = $state('');
+  let startPhase = $state('boot');
+  let waitingSeconds = $state(0);
   let updateInfo = $state<{
     latestVersion: string;
     releaseUrl: string;
   } | null>(null);
 
+  const PHASE_LABELS: Record<string, string> = {
+    boot: 'Starting backend…',
+    store: 'Opening database and loading AI models…',
+    bus: 'Starting services…',
+    ready: 'Ready',
+    failed: 'Backend failed to start — check the logs',
+  };
+
   $effect(() => {
     checkHealth();
-    const interval = setInterval(checkHealth, 3000);
+    const interval = setInterval(() => {
+      if (!serverReady) waitingSeconds += 3;
+      checkHealth();
+    }, 3000);
     return () => clearInterval(interval);
   });
 
   async function checkHealth() {
     try {
       const health = await api.health();
+      if (health.status === 'starting') {
+        startPhase = health.phase ?? 'boot';
+        return;
+      }
+      if (health.status === 'failed') {
+        startPhase = 'failed';
+        return;
+      }
       serverReady = true;
       if (health.version && !version) {
         version = health.version;
@@ -61,10 +82,18 @@
 
 {#if !serverReady}
   <div class="flex items-center justify-center h-screen bg-[var(--bg)] text-[var(--text)]">
-    <div class="text-center">
+    <div class="text-center max-w-sm">
       <div class="text-2xl font-semibold mb-2">Omnimind Explorer</div>
-      <div class="text-sm text-[var(--text-muted)]">Waiting for server...</div>
-      <div class="mt-4 w-8 h-8 border-2 border-[var(--accent)] border-t-transparent rounded-full animate-spin mx-auto"></div>
+      <div class="text-sm text-[var(--text-muted)]">{PHASE_LABELS[startPhase] ?? 'Waiting for server…'}</div>
+      {#if startPhase !== 'failed'}
+        <div class="mt-4 w-8 h-8 border-2 border-[var(--accent)] border-t-transparent rounded-full animate-spin mx-auto"></div>
+        {#if waitingSeconds >= 9}
+          <div class="mt-4 text-xs text-[var(--text-muted)]">
+            Still loading ({waitingSeconds}s) — this is normal. On first launch Omnimind loads
+            its local AI models, which can take up to a minute. Everything runs on your machine.
+          </div>
+        {/if}
+      {/if}
     </div>
   </div>
 {:else}

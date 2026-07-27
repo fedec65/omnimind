@@ -85,8 +85,12 @@ export interface OmnimindConfig {
    * NER engine for concept extraction: 'heuristic' (default, zero-download)
    * or 'onnx' (multilingual model, ~178MB downloaded on first use, with
    * automatic fallback to heuristic). Overrides the persisted nerEngine setting.
+   * The ONNX model always loads in the background: startup is never blocked
+   * and the heuristic serves extractions until the model is ready.
    */
   nerEngine?: 'heuristic' | 'onnx' | undefined;
+  /** Startup progress hook — called with coarse phases: 'store', 'bus', 'ready' */
+  onProgress?: ((phase: string) => void) | undefined;
 }
 
 // ─── Main API ─────────────────────────────────────────────────────
@@ -137,6 +141,7 @@ export class Omnimind {
     mkdirSync(dataDir, { recursive: true });
 
     // Initialize store
+    config.onProgress?.('store');
     const store = new MemoryStore({ dbPath, modelPath: config.modelPath });
     const result = await store.init();
     if (!result.ok) {
@@ -145,13 +150,15 @@ export class Omnimind {
 
     // Configure the NER engine (heuristic by default; 'onnx' loads the
     // multilingual model with automatic heuristic fallback). Explicit
-    // config wins over the persisted setting.
+    // config wins over the persisted setting. The ONNX model loads in the
+    // background: startup stays fast and extractEntitiesAsync falls back
+    // to the heuristic until the model is ready.
     const nerSetting = store.getSetting('nerEngine');
     const nerEngine = config.nerEngine
       ?? (nerSetting.ok && nerSetting.value === 'onnx' ? 'onnx' : 'heuristic');
     configureNerEngine(nerEngine);
     if (nerEngine === 'onnx') {
-      await initNerEngine();
+      void initNerEngine();
     }
 
     // Initialize prediction with persistence
@@ -161,6 +168,7 @@ export class Omnimind {
     predictor.attachStore(patternStore);
 
     // Initialize cross-tool memory bus
+    config.onProgress?.('bus');
     const bus = new MemoryBus(store);
 
     const enableAdapters = config.adapters !== false;
@@ -218,6 +226,7 @@ export class Omnimind {
       }
     }
 
+    config.onProgress?.('ready');
     return omni;
   }
 

@@ -37,7 +37,27 @@ describe('HTTP Server', () => {
       });
       server.on('error', reject);
     });
+
+    // The server now listens immediately and initializes in the background:
+    // wait for /api/health to report status 'ok' before running assertions.
+    await waitForReady();
   }, 60000);
+
+  async function waitForReady(): Promise<void> {
+    const deadline = Date.now() + 30000;
+    for (;;) {
+      try {
+        const res = await fetch(`http://localhost:${port}/api/health`);
+        const health = await res.json();
+        if (health.status === 'ok') return;
+        if (health.status === 'failed') throw new Error('Server initialization failed');
+      } catch (e) {
+        if (e instanceof Error && e.message === 'Server initialization failed') throw e;
+      }
+      if (Date.now() > deadline) throw new Error('Server ready timeout');
+      await new Promise((r) => setTimeout(r, 500));
+    }
+  }
 
   afterAll(() => {
     server.kill();

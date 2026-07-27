@@ -47,6 +47,22 @@ describe('Setup endpoints', () => {
       });
       server.on('error', reject);
     });
+
+    // The server listens immediately and initializes in the background:
+    // wait for /api/health to report status 'ok' before running assertions.
+    const deadline = Date.now() + 30000;
+    for (;;) {
+      try {
+        const res = await fetch(`http://localhost:${port}/api/health`);
+        const health = await res.json();
+        if (health.status === 'ok') break;
+        if (health.status === 'failed') throw new Error('Server initialization failed');
+      } catch (e) {
+        if (e instanceof Error && e.message === 'Server initialization failed') throw e;
+      }
+      if (Date.now() > deadline) throw new Error('Server ready timeout');
+      await new Promise((r) => setTimeout(r, 500));
+    }
   }, 60000);
 
   afterAll(async () => {
