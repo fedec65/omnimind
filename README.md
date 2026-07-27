@@ -75,7 +75,7 @@ Download the latest release for your platform — no Node.js or technical setup 
 | **Windows** | `.msi` installer | ~175 MB |
 | **Linux** (Ubuntu/Debian) | `.deb` package | ~400 MB |
 
-📦 **[Download v0.7.4](https://github.com/fedec65/omnimind/releases/latest)**
+📦 **[Download latest version](https://github.com/fedec65/omnimind/releases/latest)**
 
 **First launch:**
 1. Install the app (drag to Applications on macOS, run the installer on Windows, or `dpkg -i` on Linux)
