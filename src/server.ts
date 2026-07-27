@@ -25,6 +25,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'http';
 import { URL } from 'url';
 import { readFile } from 'fs/promises';
+import { readFileSync } from 'fs';
 import { resolve, extname } from 'path';
 import { fileURLToPath } from 'url';
 import { Omnimind } from './index.js';
@@ -40,6 +41,20 @@ import { installCliWrapper, isCliInstalled } from './setup/installCli.js';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const STATIC_DIR = resolve(__dirname, '../gui/dist');
+
+/**
+ * Server version, read from package.json (never hardcode it: the GUI
+ * sidebar and the update checker rely on /api/health). In the Tauri
+ * bundle prepare-resources.sh stages package.json next to dist/.
+ */
+const VERSION = ((): string => {
+  try {
+    const pkg = JSON.parse(readFileSync(resolve(__dirname, '../package.json'), 'utf8'));
+    return typeof pkg.version === 'string' ? pkg.version : 'unknown';
+  } catch {
+    return 'unknown';
+  }
+})();
 
 const MIME_TYPES: Record<string, string> = {
   '.html': 'text/html',
@@ -129,7 +144,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
 
   // Health check
   if (path === '/api/health' && method === 'GET') {
-    sendJson(res, 200, { status: 'ok', version: '0.6.8' });
+    sendJson(res, 200, { status: 'ok', version: VERSION });
     return;
   }
 

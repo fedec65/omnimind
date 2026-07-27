@@ -7,6 +7,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { spawn } from 'child_process';
 import { join } from 'path';
+import { readFileSync } from 'node:fs';
 import type { ChildProcess } from 'child_process';
 
 describe('HTTP Server', () => {
@@ -48,10 +49,11 @@ describe('HTTP Server', () => {
     return res.json();
   }
 
-  it('should return health status', async () => {
+  it('should return health status with the package.json version', async () => {
     const data = await fetchApi('/api/health');
     expect(data.status).toBe('ok');
-    expect(data.version).toBe('0.6.8');
+    const pkg = JSON.parse(readFileSync(join(process.cwd(), 'package.json'), 'utf8'));
+    expect(data.version).toBe(pkg.version);
   });
 
   it('should create and retrieve a memory', async () => {

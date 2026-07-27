@@ -84,6 +84,9 @@ echo "[prepare] Node.js copied: $(ls "$RESOURCES_DIR/node/bin/" 2>/dev/null || l
 echo "[prepare] Copying dist/"
 cp -r dist "$RESOURCES_DIR/dist"
 
+# --- Copy package.json (the server reads its version for /api/health) ---
+cp package.json "$RESOURCES_DIR/package.json"
+
 # --- Copy node_modules ---
 echo "[prepare] Copying node_modules/"
 cp -r node_modules "$RESOURCES_DIR/node_modules"
