@@ -48,7 +48,7 @@ Omnimind is a local memory engine that stores, searches, predicts, and visualize
 │  - Resources + Prompts                  │
 ├─────────────────────────────────────────┤
 │  NEURO-SYMBOLIC MEMORY CORE             │
-│  ├─ L0: Verbatim     (0–7 days)        │
+│  ├─ L0: Verbatim     (0–7 days)         │
 │  ├─ L1: Compressed   (7–30 days)        │  ← Rule-based shorthand
 │  ├─ L2: Concept Graph (30–180 days)     │  ← Entity extraction
 │  └─ L3: Wisdom       (180+ days)        │  ← Pattern distillation
@@ -75,7 +75,7 @@ Download the latest release for your platform — no Node.js or technical setup 
 | **Windows** | `.msi` installer | ~175 MB |
 | **Linux** (Ubuntu/Debian) | `.deb` package | ~400 MB |
 
-📦 **[Download v0.7.0](https://github.com/fedec65/omnimind/releases/latest)**
+📦 **[Download v0.7.4](https://github.com/fedec65/omnimind/releases/latest)**
 
 **First launch:**
 1. Install the app (drag to Applications on macOS, run the installer on Windows, or `dpkg -i` on Linux)
