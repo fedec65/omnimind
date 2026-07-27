@@ -7,6 +7,11 @@
   let isLoading = $state(false);
   let dateFrom = $state('');
   let dateTo = $state('');
+  let showNewForm = $state(false);
+  let newContent = $state('');
+  let newWing = $state('general');
+  let newRoom = $state('');
+  let isCreating = $state(false);
 
   async function doSearch() {
     if (!query.trim() && !dateFrom && !dateTo) return;
@@ -24,15 +29,18 @@
   }
 
   async function createMemory() {
-    const content = prompt('Memory content:');
-    if (!content) return;
-    const wing = prompt('Wing (category):', 'general');
-    if (!wing) return;
+    if (!newContent.trim() || !newWing.trim()) return;
+    isCreating = true;
     try {
-      await api.createMemory(content, wing);
+      await api.createMemory(newContent.trim(), newWing.trim(), newRoom.trim() || undefined);
+      newContent = '';
+      newRoom = '';
+      showNewForm = false;
       await doSearch();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to create memory');
+    } finally {
+      isCreating = false;
     }
   }
 
@@ -65,12 +73,50 @@
         Search
       </button>
       <button
-        onclick={createMemory}
+        onclick={() => (showNewForm = !showNewForm)}
         class="px-4 py-2.5 bg-[var(--surface)] border border-[var(--border)] text-sm rounded-lg hover:bg-[var(--surface-hover)] transition-colors"
       >
         + New
       </button>
     </div>
+
+    {#if showNewForm}
+      <div class="bg-[var(--surface)] border border-[var(--border)] rounded-xl p-4 space-y-3">
+        <textarea
+          bind:value={newContent}
+          placeholder="Memory content..."
+          rows="3"
+          class="w-full bg-[var(--bg)] border border-[var(--border)] rounded-lg px-3 py-2 text-sm text-[var(--text)] focus:outline-none focus:border-[var(--accent)] placeholder:text-[var(--text-muted)]"
+        ></textarea>
+        <div class="flex items-center gap-3">
+          <input
+            type="text"
+            bind:value={newWing}
+            placeholder="Wing (category)"
+            class="flex-1 bg-[var(--bg)] border border-[var(--border)] rounded-lg px-3 py-2 text-sm text-[var(--text)] focus:outline-none focus:border-[var(--accent)] placeholder:text-[var(--text-muted)]"
+          />
+          <input
+            type="text"
+            bind:value={newRoom}
+            placeholder="Room (optional)"
+            class="flex-1 bg-[var(--bg)] border border-[var(--border)] rounded-lg px-3 py-2 text-sm text-[var(--text)] focus:outline-none focus:border-[var(--accent)] placeholder:text-[var(--text-muted)]"
+          />
+          <button
+            onclick={createMemory}
+            disabled={isCreating || !newContent.trim() || !newWing.trim()}
+            class="px-4 py-2 bg-[var(--accent)] text-white text-sm font-medium rounded-lg hover:opacity-90 transition-opacity disabled:opacity-50"
+          >
+            {isCreating ? 'Saving...' : 'Save'}
+          </button>
+          <button
+            onclick={() => (showNewForm = false)}
+            class="px-4 py-2 bg-[var(--surface)] border border-[var(--border)] text-sm rounded-lg hover:bg-[var(--surface-hover)] transition-colors"
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    {/if}
     <div class="flex items-center gap-3">
       <div class="flex items-center gap-2">
         <span class="text-xs text-[var(--text-muted)]">From</span>
