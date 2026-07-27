@@ -1637,6 +1637,28 @@ export class MemoryStore {
     }
   }
 
+  // ─── Categories ─────────────────────────────────────────────────────
+
+  /**
+   * Distinct wing/room pairs with memory counts, most used first.
+   * Powers category autocomplete in the GUI — wings and rooms are
+   * free-form strings, so the "registry" is derived from actual usage.
+   */
+  getWings(): Result<Array<{ wing: string; room: string; count: number }>> {
+    if (!this.initialized) return err(new Error('Store not initialized'));
+    try {
+      const rows = this.db!.prepare(
+        `SELECT wing, room, COUNT(*) as count
+         FROM memories
+         GROUP BY wing, room
+         ORDER BY count DESC, wing ASC, room ASC`
+      ).all() as Array<{ wing: string; room: string; count: number }>;
+      return ok(rows);
+    } catch (error) {
+      return err(error instanceof Error ? error : new Error(String(error)));
+    }
+  }
+
   /** Set a setting value */
   setSetting(key: string, value: string): Result<void> {
     if (!this.initialized) return err(new Error('Store not initialized'));

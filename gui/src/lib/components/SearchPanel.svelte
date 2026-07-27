@@ -1,25 +1,40 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { appState, setError } from '../stores.svelte.ts';
-  import { api } from '../api';
+  import { api, type WingCount } from '../api';
   import MemoryCard from './MemoryCard.svelte';
 
   let query = $state('');
   let isLoading = $state(false);
   let dateFrom = $state('');
   let dateTo = $state('');
+  let filterWing = $state('');
+  let wings = $state<WingCount[]>([]);
   let showNewForm = $state(false);
   let newContent = $state('');
   let newWing = $state('general');
   let newRoom = $state('');
   let isCreating = $state(false);
 
+  const wingNames = $derived([...new Set(wings.map((w) => w.wing))]);
+  const roomsOfNewWing = $derived([...new Set(wings.filter((w) => w.wing === newWing).map((w) => w.room))]);
+
+  onMount(async () => {
+    try {
+      const res = await api.wings();
+      wings = res.wings;
+    } catch {
+      // Older sidecar without /api/wings — autocomplete stays empty
+    }
+  });
+
   async function doSearch() {
-    if (!query.trim() && !dateFrom && !dateTo) return;
+    if (!query.trim() && !dateFrom && !dateTo && !filterWing) return;
     isLoading = true;
     try {
       const from = dateFrom ? new Date(dateFrom).getTime() : undefined;
       const to = dateTo ? new Date(dateTo).getTime() + 24 * 60 * 60 * 1000 : undefined; // inclusive
-      const res = await api.search(query, 20, undefined, from, to);
+      const res = await api.search(query, 20, undefined, from, to, filterWing || undefined);
       appState.searchResults = res.results;
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Search failed');
@@ -93,14 +108,26 @@
             type="text"
             bind:value={newWing}
             placeholder="Wing (category)"
+            list="wing-suggestions"
             class="flex-1 bg-[var(--bg)] border border-[var(--border)] rounded-lg px-3 py-2 text-sm text-[var(--text)] focus:outline-none focus:border-[var(--accent)] placeholder:text-[var(--text-muted)]"
           />
+          <datalist id="wing-suggestions">
+            {#each wingNames as name}
+              <option value={name}></option>
+            {/each}
+          </datalist>
           <input
             type="text"
             bind:value={newRoom}
             placeholder="Room (optional)"
+            list="room-suggestions"
             class="flex-1 bg-[var(--bg)] border border-[var(--border)] rounded-lg px-3 py-2 text-sm text-[var(--text)] focus:outline-none focus:border-[var(--accent)] placeholder:text-[var(--text-muted)]"
           />
+          <datalist id="room-suggestions">
+            {#each roomsOfNewWing as name}
+              <option value={name}></option>
+            {/each}
+          </datalist>
           <button
             onclick={createMemory}
             disabled={isCreating || !newContent.trim() || !newWing.trim()}
@@ -118,6 +145,21 @@
       </div>
     {/if}
     <div class="flex items-center gap-3">
+      {#if wingNames.length > 0}
+        <div class="flex items-center gap-2">
+          <span class="text-xs text-[var(--text-muted)]">Wing</span>
+          <select
+            bind:value={filterWing}
+            onchange={doSearch}
+            class="bg-[var(--surface)] border border-[var(--border)] rounded-lg px-2 py-1 text-sm text-[var(--text)] focus:outline-none focus:border-[var(--accent)]"
+          >
+            <option value="">All</option>
+            {#each wingNames as name}
+              <option value={name}>{name}</option>
+            {/each}
+          </select>
+        </div>
+      {/if}
       <div class="flex items-center gap-2">
         <span class="text-xs text-[var(--text-muted)]">From</span>
         <input type="date" bind:value={dateFrom} class="bg-[var(--surface)] border border-[var(--border)] rounded-lg px-2 py-1 text-sm text-[var(--text)] focus:outline-none focus:border-[var(--accent)]" />

@@ -289,10 +289,12 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
     const namespace = url.searchParams.get('namespace') ?? undefined;
     const namespacesParam = url.searchParams.get('namespaces');
     const namespaces = namespacesParam ? namespacesParam.split(',') : undefined;
+    const wing = url.searchParams.get('wing') ?? undefined;
+    const room = url.searchParams.get('room') ?? undefined;
     const from = url.searchParams.get('from');
     const to = url.searchParams.get('to');
     const timeRange = from && to ? [parseInt(from, 10), parseInt(to, 10)] as const : undefined;
-    const result = await omni!.search(query, { limit, namespace, namespaces, timeRange });
+    const result = await omni!.search(query, { limit, namespace, namespaces, wing, room, timeRange });
     if (!result.ok) {
       sendJson(res, 500, { error: result.error.message });
       return;
@@ -302,6 +304,17 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
       omni!.activityTracker.recordMemoryAccess(r.memory.id);
     }
     sendJson(res, 200, { results: result.value });
+    return;
+  }
+
+  // Distinct wing/room categories with counts (for GUI autocomplete)
+  if (path === '/api/wings' && method === 'GET') {
+    const result = omni!.memoryStore.getWings();
+    if (!result.ok) {
+      sendJson(res, 500, { error: result.error.message });
+      return;
+    }
+    sendJson(res, 200, { wings: result.value });
     return;
   }
 

@@ -89,6 +89,19 @@ describe('HTTP Server', () => {
     expect(get.memory.content).toBe('Test GUI memory');
   });
 
+  it('should list wing/room categories with counts', async () => {
+    await fetchApi('/api/memories', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: 'Wings test memory', wing: 'wings-test', room: 'r1' }),
+    });
+
+    const data = await fetchApi('/api/wings');
+    const entry = data.wings.find((w: { wing: string; room: string }) => w.wing === 'wings-test' && w.room === 'r1');
+    expect(entry).toBeDefined();
+    expect(entry.count).toBeGreaterThanOrEqual(1);
+  });
+
   it('should search memories', async () => {
     const data = await fetchApi('/api/search?q=GUI&limit=5');
     expect(Array.isArray(data.results)).toBe(true);

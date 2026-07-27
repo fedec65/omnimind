@@ -257,4 +257,30 @@ describe('MemoryStore', () => {
       expect(stats.value.avgRetrievalLatencyMs).toBeGreaterThan(0);
     });
   });
+
+  describe('getWings', () => {
+    it('returns distinct wing/room pairs with counts, most used first', async () => {
+      await store.store('Alpha one', { wing: 'alpha', room: 'r1' });
+      await store.store('Alpha two', { wing: 'alpha', room: 'r1' });
+      await store.store('Alpha three', { wing: 'alpha', room: 'r2' });
+      await store.store('Beta one', { wing: 'beta', room: 'r1' });
+
+      const result = store.getWings();
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+
+      expect(result.value).toEqual([
+        { wing: 'alpha', room: 'r1', count: 2 },
+        { wing: 'alpha', room: 'r2', count: 1 },
+        { wing: 'beta', room: 'r1', count: 1 },
+      ]);
+    });
+
+    it('returns an empty list when there are no memories', () => {
+      const result = store.getWings();
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value).toEqual([]);
+    });
+  });
 });

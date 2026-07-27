@@ -120,6 +120,12 @@ export interface McpClientStatus {
   configPath: string;
 }
 
+export interface WingCount {
+  wing: string;
+  room: string;
+  count: number;
+}
+
 export interface SetupClientsResponse {
   clients: McpClientStatus[];
   cli: { installed: string | null };
@@ -154,15 +160,19 @@ async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
 export const api = {
   health: () => fetchJson<{ status: string; version?: string; phase?: string }>('/api/health'),
 
-  search: (q: string, limit = 20, namespaces?: string[], from?: number, to?: number) => {
+  search: (q: string, limit = 20, namespaces?: string[], from?: number, to?: number, wing?: string, room?: string) => {
     const params = new URLSearchParams();
     params.set('q', q);
     params.set('limit', String(limit));
     if (namespaces) params.set('namespaces', namespaces.join(','));
     if (from) params.set('from', String(from));
     if (to) params.set('to', String(to));
+    if (wing) params.set('wing', wing);
+    if (room) params.set('room', room);
     return fetchJson<{ results: SearchResult[] }>(`/api/search?${params.toString()}`);
   },
+
+  wings: () => fetchJson<{ wings: WingCount[] }>('/api/wings'),
 
   memories: (q?: string, limit = 50, wing?: string, room?: string, namespace?: string, namespaces?: string[], from?: number, to?: number) => {
     const params = new URLSearchParams();
