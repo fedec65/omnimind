@@ -2,6 +2,7 @@
   import { appState, setError } from './lib/stores.svelte.ts';
   import { api } from './lib/api';
   import { checkForUpdates, skipVersion } from './lib/updates';
+  import { open as shellOpen } from '@tauri-apps/plugin-shell';
   import SearchPanel from './lib/components/SearchPanel.svelte';
   import StatsPanel from './lib/components/StatsPanel.svelte';
   import TimelineView from './lib/components/TimelineView.svelte';
@@ -73,8 +74,14 @@
     }
   }
 
-  function openRelease() {
-    if (updateInfo?.releaseUrl) {
+  async function openRelease() {
+    if (!updateInfo?.releaseUrl) return;
+    try {
+      // window.open is a no-op inside the Tauri webview — use the shell
+      // plugin so the URL opens in the system browser.
+      await shellOpen(updateInfo.releaseUrl);
+    } catch {
+      // Fallback for dev in a plain browser
       window.open(updateInfo.releaseUrl, '_blank');
     }
   }
