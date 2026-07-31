@@ -717,10 +717,16 @@ function readBody(req: IncomingMessage): Promise<Record<string, unknown>> {
 
 function shutdown(server: ReturnType<typeof createServer>): void {
   console.log('[Omnimind Server] Shutting down...');
-  omni?.close();
-  server.close(() => {
-    process.exit(0);
-  });
+  // close() is async (waits for adapters to finish in-flight work before
+  // closing the stores) — chain it so process.exit can't cut it off.
+  const cleanup = omni ? omni.close() : Promise.resolve();
+  cleanup
+    .catch((err) => console.error('[Omnimind Server] Error during shutdown:', err))
+    .finally(() => {
+      server.close(() => {
+        process.exit(0);
+      });
+    });
 }
 
 main().catch((err) => {

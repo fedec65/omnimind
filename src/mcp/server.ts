@@ -38,6 +38,19 @@ import { Omnimind } from '../index.js';
 import { getNerEngineInfo } from '../core/ner/NerEngine.js';
 import { EventType } from '../bus/types.js';
 import { join } from 'path';
+import { readFileSync } from 'node:fs';
+
+/** Version reported to MCP clients, read from package.json (dist/mcp → repo root) */
+const SERVER_VERSION = ((): string => {
+  try {
+    const pkg = JSON.parse(
+      readFileSync(new URL('../../package.json', import.meta.url), 'utf-8'),
+    ) as { version?: string };
+    return pkg.version ?? '0.0.0';
+  } catch {
+    return '0.0.0';
+  }
+})();
 import { homedir } from 'os';
 import { URLSearchParams, pathToFileURL } from 'node:url';
 import { NamespaceRegistry } from './namespace.js';
@@ -122,7 +135,7 @@ export class OmnimindMcpServer {
     this.server = new Server(
       {
         name: 'omnimind',
-        version: '0.4.2',
+        version: SERVER_VERSION,
       },
       {
         capabilities: {
@@ -192,7 +205,7 @@ export class OmnimindMcpServer {
       return {
         protocolVersion: '2024-11-05',
         capabilities: { tools: {}, resources: {}, prompts: {} },
-        serverInfo: { name: 'omnimind', version: '0.4.2' },
+        serverInfo: { name: 'omnimind', version: SERVER_VERSION },
       };
     });
 
@@ -744,7 +757,11 @@ export class OmnimindMcpServer {
     const busStats = this.bus.getStats();
     const ner = getNerEngineInfo();
     const nerDetail = ner.configured === 'onnx'
-      ? ner.modelLoaded ? 'onnx (multilingual model)' : 'heuristic (onnx unavailable, fallback)'
+      ? ner.modelLoaded
+        ? 'onnx (multilingual model)'
+        : ner.loadFailed
+          ? 'heuristic (onnx unavailable, fallback)'
+          : 'heuristic (onnx model loading, fallback active)'
       : 'heuristic';
 
     return {

@@ -19,8 +19,8 @@ describe('End-to-End', () => {
     omni = await Omnimind.create({ dataDir: tmpDir, adapters: false });
   });
 
-  afterEach(() => {
-    omni.close();
+  afterEach(async () => {
+    await omni.close();
     rmSync(tmpDir, { recursive: true, force: true });
   });
 

@@ -59,20 +59,22 @@ export class MemoryBus {
     }
   }
 
-  unregisterAdapter(toolId: string): void {
+  async unregisterAdapter(toolId: string): Promise<void> {
     const adapter = this.adapters.get(toolId);
     if (adapter) {
-      adapter.onDisconnect().catch(() => {});
+      // Wait for the adapter to finish any in-flight processing (e.g. bulk
+      // import) before the store is closed by the caller.
+      await adapter.onDisconnect().catch(() => {});
       this.adapters.delete(toolId);
       this.subscriptions.delete(toolId);
       console.log(`[MemoryBus] Adapter disconnected: ${toolId}`);
     }
   }
 
-  close(): void {
-    for (const toolId of Array.from(this.adapters.keys())) {
-      this.unregisterAdapter(toolId);
-    }
+  async close(): Promise<void> {
+    await Promise.all(
+      Array.from(this.adapters.keys()).map((toolId) => this.unregisterAdapter(toolId)),
+    );
   }
 
   // ─── Publish Pipeline ───────────────────────────────────────────

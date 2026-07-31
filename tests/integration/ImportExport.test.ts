@@ -17,8 +17,8 @@ describe('Import/Export', () => {
     omni = await Omnimind.create({ dataDir: tmpDir, adapters: false });
   });
 
-  afterEach(() => {
-    omni.close();
+  afterEach(async () => {
+    await omni.close();
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
@@ -49,7 +49,7 @@ describe('Import/Export', () => {
     if (!stats.ok) return;
     expect(stats.value.totalMemories).toBe(2);
 
-    omni2.close();
+    await omni2.close();
     rmSync(tmpDir2, { recursive: true, force: true });
   });
 
