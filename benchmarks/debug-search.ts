@@ -22,7 +22,7 @@ async function main() {
     console.log('Search error:', results.error.message);
   }
 
-  omni.close();
+  await omni.close();
 }
 
 main().catch(console.error);

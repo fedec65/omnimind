@@ -141,7 +141,7 @@ async function init(): Promise<void> {
     console.log(`  Model cache: ${join(homedir(), '.omnimind', 'models')}`);
     console.log(`  Memories: ${stats.value.totalMemories}`);
   }
-  omni.close();
+  await omni.close();
 }
 
 async function store(args: string[]): Promise<void> {
@@ -173,7 +173,7 @@ async function store(args: string[]): Promise<void> {
     console.error(`Error: ${result.error.message}`);
   }
 
-  omni.close();
+  await omni.close();
 }
 
 async function search(args: string[]): Promise<void> {
@@ -208,7 +208,7 @@ async function search(args: string[]): Promise<void> {
     console.error(`Error: ${result.error.message}`);
   }
 
-  omni.close();
+  await omni.close();
 }
 
 async function predict(args: string[]): Promise<void> {
@@ -238,7 +238,7 @@ async function predict(args: string[]): Promise<void> {
     console.error(`Error: ${result.error.message}`);
   }
 
-  omni.close();
+  await omni.close();
 }
 
 async function activity(): Promise<void> {
@@ -257,7 +257,7 @@ async function activity(): Promise<void> {
   console.log(`Total patterns: ${predStats.totalPatterns}`);
   console.log(`Unique contexts: ${predStats.uniqueContexts}`);
 
-  omni.close();
+  await omni.close();
 }
 
 async function inject(): Promise<void> {
@@ -274,7 +274,7 @@ async function inject(): Promise<void> {
     console.error(`Error: ${result.error.message}`);
   }
 
-  omni.close();
+  await omni.close();
 }
 
 async function status(): Promise<void> {
@@ -296,14 +296,18 @@ async function status(): Promise<void> {
 
     const ner = omni.getNerEngineInfo();
     const nerDetail = ner.configured === 'onnx'
-      ? ner.modelLoaded ? 'onnx (multilingual model)' : 'heuristic (onnx unavailable, fallback)'
+      ? ner.modelLoaded
+        ? 'onnx (multilingual model)'
+        : ner.loadFailed
+          ? 'heuristic (onnx unavailable, fallback)'
+          : 'heuristic (onnx model loading, fallback active)'
       : 'heuristic';
     console.log(`NER engine: ${nerDetail}`);
   } else {
     console.error(`Error: ${result.error.message}`);
   }
 
-  omni.close();
+  await omni.close();
 }
 
 async function mine(args: string[]): Promise<void> {
@@ -352,7 +356,7 @@ async function mine(args: string[]): Promise<void> {
   }
 
   console.log(`Mined ${count} memories from ${targetPath} into ${wing}`);
-  omni.close();
+  await omni.close();
 }
 
 async function busCommand(args: string[]): Promise<void> {
@@ -420,7 +424,7 @@ Bus commands:
       process.exit(1);
   }
 
-  omni.close();
+  await omni.close();
 }
 
 async function setupCommand(args: string[]): Promise<void> {
@@ -473,7 +477,7 @@ async function rebuildGraphCommand(): Promise<void> {
   const result = await rebuildGraph(omni.memoryStore, { ner });
   if (!result.ok) {
     console.error(`Error: ${result.error.message}`);
-    omni.close();
+    await omni.close();
     process.exit(1);
   }
 
@@ -488,7 +492,7 @@ async function rebuildGraphCommand(): Promise<void> {
     }
   }
 
-  omni.close();
+  await omni.close();
 }
 
 async function wipe(): Promise<void> {

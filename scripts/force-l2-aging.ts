@@ -135,7 +135,7 @@ async function main(): Promise<void> {
   console.log(`  Entities created:   ${entitiesCreated}`);
   console.log(`  Relations created:  ${relationsCreated}`);
 
-  omni.close();
+  await omni.close();
 }
 
 main().catch((err) => {

@@ -757,10 +757,10 @@ export class Omnimind {
     return getNerEngineInfo();
   }
 
-  /** Close all resources */
-  close(): void {
+  /** Close all resources (waits for adapters to finish in-flight work) */
+  async close(): Promise<void> {
     this.activityTracker.stop();
-    this.bus.close();
+    await this.bus.close();
     this.patternStore.close();
     this.memoryStore.close();
   }
