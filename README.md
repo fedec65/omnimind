@@ -111,6 +111,16 @@ npx omnimind predict
 
 **First run** downloads the ~80MB ONNX model (`all-MiniLM-L6-v2`) from Hugging Face. All subsequent operations are fully offline.
 
+### Troubleshooting
+
+**`NODE_MODULE_VERSION` / `ERR_DLOPEN_FAILED` error** — the native database module (`better-sqlite3`) was compiled for a different Node.js version. This happens after upgrading Node (Homebrew or nvm). Fix by rebuilding the native module:
+
+```bash
+npm rebuild better-sqlite3 -g
+# or, if installed from a local checkout / npm link:
+npm rebuild better-sqlite3 --prefix /path/to/omnimind
+```
+
 ### Development
 
 ```bash
