@@ -1,0 +1,30 @@
+name: Sync dev with main
+
+# Keeps dev from drifting behind main: whenever main receives commits
+# (e.g. a release merge or a direct push), fast-forward dev to match.
+# If dev has integration work main doesn't have yet (normal between
+# releases), the fast-forward is skipped — dev leads, no error.
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  sync-dev:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Fast-forward dev to main
+        run: |
+          if git push origin HEAD:refs/heads/dev; then
+            echo "dev fast-forwarded to $(git rev-parse HEAD)"
+          else
+            echo "::notice::dev has commits not yet in main — skipping sync (dev leads)"
+          fi

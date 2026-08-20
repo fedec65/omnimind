@@ -127,6 +127,8 @@ npm run server
 npm run gui:dev
 ```
 
+**Branching model:** feature branches PR into `dev`; releases merge `dev` into `main` (prefer fast-forward). A [`sync-dev`](.github/workflows/sync-dev.yml) workflow fast-forwards `dev` whenever `main` receives commits directly, so `dev` never drifts behind.
+
 ## CLI Commands
 
 | Command | Description |
