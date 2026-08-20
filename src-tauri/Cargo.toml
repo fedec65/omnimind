@@ -1,6 +1,6 @@
 [package]
 name = "omnimind-gui"
-version = "0.7.8"
+version = "0.7.9"
 description = "Omnimind Visual Memory Explorer"
 authors = ["Omnimind Contributors"]
 edition = "2021"
