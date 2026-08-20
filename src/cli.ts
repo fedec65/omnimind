@@ -24,7 +24,8 @@ import { Omnimind } from './index.js';
 import { rebuildGraph } from './core/GraphRebuilder.js';
 import { runSetup, type McpClientId } from './setup/mcpSetup.js';
 import { homedir } from 'os';
-import { join, resolve } from 'path';
+import { dirname, join, resolve } from 'path';
+import { fileURLToPath } from 'url';
 
 const commands: Record<string, (args: string[]) => Promise<void>> = {
   init,
@@ -67,9 +68,28 @@ async function main(): Promise<void> {
   try {
     await handler(args);
   } catch (error) {
-    console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
+    const message = error instanceof Error ? error.message : String(error);
+    if (isNodeAbiMismatch(error, message)) {
+      const pkgDir = dirname(dirname(fileURLToPath(import.meta.url)));
+      console.error(
+        `Error: Omnimind's native database module (better-sqlite3) was built for a different
+Node.js version — your Node.js was likely upgraded since the last install. To fix, run:
+
+    npm rebuild better-sqlite3 --prefix ${pkgDir}
+
+(or reinstall omnimind: npm install -g omnimind)`
+      );
+      console.error(`\nOriginal error: ${message}`);
+    } else {
+      console.error(`Error: ${message}`);
+    }
     process.exit(1);
   }
+}
+
+function isNodeAbiMismatch(error: unknown, message: string): boolean {
+  const code = (error as { code?: unknown } | null)?.code;
+  return message.includes('NODE_MODULE_VERSION') || code === 'ERR_DLOPEN_FAILED';
 }
 
 function printHelp(): void {

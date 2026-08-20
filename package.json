@@ -1,6 +1,6 @@
 {
   "name": "omnimind",
-  "version": "0.7.8",
+  "version": "0.7.9",
   "description": "Proactive, cross-tool memory system for LLMs \u2014 100% local, privacy-first",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
