@@ -8,6 +8,10 @@ import { describe, it, expect } from 'vitest';
 import { IntentPredictor, buildFingerprint } from '../../src/prediction/IntentPredictor.js';
 import type { Memory } from '../../src/core/types.js';
 import { MemoryLayer } from '../../src/core/types.js';
+import { PatternStore } from '../../src/prediction/PatternStore.js';
+import { tmpdir } from 'os';
+import { join } from 'path';
+import { unlinkSync, existsSync } from 'fs';
 
 function makeMemory(id: string): Memory {
   return {
@@ -259,6 +263,58 @@ describe('IntentPredictor', () => {
       expect(result.ok).toBe(true);
       if (!result.ok) return;
       expect(result.value.length).toBe(0);
+    });
+  });
+
+  describe('attachStore (similarity across restarts)', () => {
+    it('should rebuild similarity indexes from persisted pattern context', async () => {
+      const dbPath = join(tmpdir(), `omnimind-predict-restart-test-${Date.now()}.db`);
+      const storeA = new PatternStore({ dbPath });
+      const writer = new IntentPredictor();
+      writer.attachStore(storeA);
+
+      const fpA = buildFingerprint({
+        projectPath: '/home/user/project-alpha',
+        gitBranch: 'main',
+        currentFile: 'src/index.ts',
+        recentTools: [],
+        recentWings: ['alpha'],
+        recentRooms: ['auth'],
+      });
+      for (let i = 0; i < 3; i++) {
+        writer.recordAccess(fpA, 'mem-auth');
+      }
+      storeA.close();
+
+      // Simulate a restart: fresh store + predictor loading the same DB
+      const storeB = new PatternStore({ dbPath });
+      const reader = new IntentPredictor();
+      reader.attachStore(storeB);
+
+      // Same project, different branch + file → different exact signature;
+      // the prediction must come from the rebuilt project index.
+      const fpB = buildFingerprint({
+        projectPath: '/home/user/project-alpha',
+        gitBranch: 'feature/auth',
+        currentFile: 'src/auth.py',
+        recentTools: [],
+        recentWings: ['alpha'],
+        recentRooms: ['auth'],
+      });
+
+      const result = await reader.predict(fpB, async (id) =>
+        id === 'mem-auth' ? makeMemory(id) : null,
+      );
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value.length).toBeGreaterThan(0);
+      expect(result.value[0]!.memoryId).toBe('mem-auth');
+
+      storeB.close();
+      if (existsSync(dbPath)) {
+        unlinkSync(dbPath);
+      }
     });
   });
 });

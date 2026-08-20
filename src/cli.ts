@@ -20,7 +20,7 @@
  *   omnimind status
  */
 
-import { Omnimind } from './index.js';
+import { Omnimind, resolveGitBranch } from './index.js';
 import { rebuildGraph } from './core/GraphRebuilder.js';
 import { runSetup, type McpClientId } from './setup/mcpSetup.js';
 import { homedir } from 'os';
@@ -233,10 +233,11 @@ async function search(args: string[]): Promise<void> {
 
 async function predict(args: string[]): Promise<void> {
   const omni = await Omnimind.create();
+  const projectPath = parseFlag(args, '--project') ?? process.cwd();
   const result = await omni.predict({
-    projectPath: parseFlag(args, '--project') ?? process.cwd(),
-    gitBranch: parseFlag(args, '--branch') ?? 'main',
-    currentFile: parseFlag(args, '--file') ?? 'unknown',
+    projectPath,
+    gitBranch: parseFlag(args, '--branch') ?? resolveGitBranch(projectPath),
+    currentFile: parseFlag(args, '--file') ?? '',
     recentTools: [],
     recentWings: [],
     recentRooms: [],

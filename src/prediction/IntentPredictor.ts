@@ -6,7 +6,7 @@
  * 
  * Key constraints:
  * - Prediction must complete in < 5ms
- * - Only predict when confidence >= 70%
+ * - Only predict when confidence >= 50%
  * - Maximum 3 predictions per trigger
  * - Never block user interaction
  */
@@ -20,7 +20,9 @@ import {
   err,
 } from '../core/types.js';
 import { createHash } from 'crypto';
-import { type PatternStore } from './PatternStore.js';
+import { readFileSync } from 'fs';
+import { join } from 'path';
+import { type PatternStore, type PatternContext } from './PatternStore.js';
 
 /** A single prediction with confidence score */
 export interface Prediction {
@@ -36,6 +38,8 @@ interface ActivityPattern {
   readonly frequency: number;
   readonly lastAccessed: number;
   readonly avgConfidence: number;
+  /** Components the signature was built from (for persistence + index rebuild) */
+  readonly context?: PatternContext | undefined;
 }
 
 export interface IntentPredictorConfig {
@@ -100,6 +104,12 @@ export class IntentPredictor {
         existing.push(p);
       }
       this.patterns.set(p.contextSignature, existing);
+
+      // Rebuild similarity indexes so fuzzy matching works immediately,
+      // not only for patterns recorded within this process's lifetime.
+      if (p.context) {
+        this.indexSignature(p.contextSignature, p.context);
+      }
     }
   }
 
@@ -115,6 +125,7 @@ export class IntentPredictor {
           frequency: p.frequency,
           lastAccessed: p.lastAccessed,
           avgConfidence: p.avgConfidence,
+          context: p.context,
         });
       }
     }
@@ -140,6 +151,7 @@ export class IntentPredictor {
         frequency: old.frequency + 1,
         lastAccessed: Date.now(),
         avgConfidence: (old.avgConfidence * old.frequency + 1) / (old.frequency + 1),
+        context: this.buildContext(fingerprint),
       };
     } else {
       // New pattern
@@ -149,6 +161,7 @@ export class IntentPredictor {
         frequency: 1,
         lastAccessed: Date.now(),
         avgConfidence: 0.5,
+        context: this.buildContext(fingerprint),
       });
     }
 
@@ -163,6 +176,7 @@ export class IntentPredictor {
         frequency: pattern.frequency,
         lastAccessed: pattern.lastAccessed,
         avgConfidence: pattern.avgConfidence,
+        context: pattern.context,
       });
     }
   }
@@ -284,8 +298,24 @@ export class IntentPredictor {
     return 'evening';
   }
 
+  /** Build the persistable context for a signature from a fingerprint */
+  private buildContext(fp: ContextFingerprint): PatternContext {
+    return {
+      projectHash: fp.projectHash,
+      branchHash: fp.branchHash,
+      fileExtension: fp.fileExtension,
+      recentWings: [...fp.recentWings],
+      recentRooms: [...fp.recentRooms],
+      recentTools: [...fp.recentTools],
+      timeBucket: this.timeBucket(fp.timeOfDay),
+    };
+  }
+
   /** Index a signature by its component keys for fast similarity lookup */
-  private indexSignature(signature: string, fp: ContextFingerprint): void {
+  private indexSignature(
+    signature: string,
+    fp: { readonly projectHash: string; readonly recentWings: readonly string[]; readonly recentRooms: readonly string[] },
+  ): void {
     const projSet = this.projectIndex.get(fp.projectHash) ?? new Set();
     projSet.add(signature);
     this.projectIndex.set(fp.projectHash, projSet);
@@ -415,6 +445,21 @@ export class IntentPredictor {
     }
 
     return parts.join(' ');
+  }
+}
+
+/**
+ * Read the current git branch of a directory from `.git/HEAD`.
+ *
+ * Returns 'unknown' when the directory is not a git repository (or the
+ * repository is in detached-HEAD state), matching the recording side.
+ */
+export function resolveGitBranch(projectPath: string): string {
+  try {
+    const head = readFileSync(join(projectPath, '.git', 'HEAD'), 'utf-8').trim();
+    return head.match(/ref: refs\/heads\/(.*)/)?.[1] ?? 'unknown';
+  } catch {
+    return 'unknown';
   }
 }
 
