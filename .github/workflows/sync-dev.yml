@@ -23,7 +23,11 @@ jobs:
 
       - name: Fast-forward dev to main
         run: |
-          if git push origin HEAD:refs/heads/dev; then
+          # Only the benign case is skipped: dev is ahead (not an ancestor
+          # of main). Any other push failure — permissions, protected
+          # branch, network — fails the workflow loudly.
+          if git merge-base --is-ancestor origin/dev HEAD; then
+            git push origin HEAD:refs/heads/dev
             echo "dev fast-forwarded to $(git rev-parse HEAD)"
           else
             echo "::notice::dev has commits not yet in main — skipping sync (dev leads)"
