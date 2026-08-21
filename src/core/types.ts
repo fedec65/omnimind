@@ -236,7 +236,7 @@ export const DefaultSearchConfig = {
   boostRecent: true,
   temporalHalfLife: TimeConstants.WEEK,
   hybridAlpha: 0.7, // 70% vector, 30% keyword
-  predictionThreshold: 0.7,
+  predictionThreshold: 0.5,
   predictionMaxResults: 3,
   wakeUpTokenBudget: 150,
 } as const;

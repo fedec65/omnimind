@@ -17,7 +17,7 @@ export interface InjectorConfig {
   tokenBudget?: number;
   /** Maximum predictions to include (default: 3) */
   maxPredictions?: number;
-  /** Minimum confidence to include (default: 0.7) */
+  /** Minimum confidence to include (default: 0.5) */
   minConfidence?: number;
   /** Maximum characters per memory line before truncation (default: 200) */
   maxCharsPerMemory?: number;
@@ -52,7 +52,7 @@ export class ContextInjector {
     this.config = {
       tokenBudget: config.tokenBudget ?? 150,
       maxPredictions: config.maxPredictions ?? 3,
-      minConfidence: config.minConfidence ?? 0.7,
+      minConfidence: config.minConfidence ?? 0.5,
       maxCharsPerMemory: config.maxCharsPerMemory ?? 200,
     };
   }

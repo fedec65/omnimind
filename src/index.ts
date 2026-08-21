@@ -39,7 +39,7 @@ import { MemoryStore } from './core/MemoryStore.js';
 import { EmbeddingEngine } from './core/EmbeddingEngine.js';
 import { SearchEngine } from './core/SearchEngine.js';
 import { AgingPipeline } from './layers/AgingPipeline.js';
-import { IntentPredictor, buildFingerprint } from './prediction/IntentPredictor.js';
+import { IntentPredictor, buildFingerprint, resolveGitBranch } from './prediction/IntentPredictor.js';
 import { PatternStore } from './prediction/PatternStore.js';
 import { ActivityTracker } from './prediction/ActivityTracker.js';
 import { ContextInjector } from './prediction/ContextInjector.js';
@@ -771,6 +771,7 @@ export class Omnimind {
 export {
   MemoryLayer,
   buildFingerprint,
+  resolveGitBranch,
   EmbeddingEngine,
   SearchEngine,
   AgingPipeline,

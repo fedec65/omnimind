@@ -5,6 +5,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import Database from 'better-sqlite3';
 import { PatternStore } from '../../src/prediction/PatternStore.js';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -131,6 +132,103 @@ describe('PatternStore', () => {
         expect(stats.value.totalPatterns).toBe(3);
         expect(stats.value.uniqueContexts).toBe(2);
       }
+    });
+  });
+
+  describe('pattern context', () => {
+    it('should persist and reload the context components', () => {
+      store.save({
+        contextSignature: 'sig-ctx',
+        memoryId: 'mem-ctx',
+        frequency: 2,
+        lastAccessed: Date.now(),
+        avgConfidence: 0.6,
+        context: {
+          projectHash: 'proj-1',
+          branchHash: 'branch-1',
+          fileExtension: '.ts',
+          recentWings: ['dev', 'docs'],
+          recentRooms: ['api'],
+          recentTools: ['search'],
+          timeBucket: 'morning',
+        },
+      });
+
+      const loaded = store.load();
+      expect(loaded).toHaveLength(1);
+      expect(loaded[0]!.context).toEqual({
+        projectHash: 'proj-1',
+        branchHash: 'branch-1',
+        fileExtension: '.ts',
+        recentWings: ['dev', 'docs'],
+        recentRooms: ['api'],
+        recentTools: ['search'],
+        timeBucket: 'morning',
+      });
+    });
+
+    it('should load patterns without context as undefined', () => {
+      store.save({ contextSignature: 'sig-plain', memoryId: 'mem-1', frequency: 1, lastAccessed: 1, avgConfidence: 0.5 });
+
+      const loaded = store.load();
+      expect(loaded).toHaveLength(1);
+      expect(loaded[0]!.context).toBeUndefined();
+    });
+
+    it('should migrate a legacy database without context columns', () => {
+      // Simulate a pre-migration DB: patterns table without the context columns.
+      store.close();
+      unlinkSync(dbPath);
+
+      const legacy = new Database(dbPath);
+      legacy.exec(`
+        CREATE TABLE activity_patterns (
+          context_signature TEXT NOT NULL,
+          memory_id TEXT NOT NULL,
+          frequency INTEGER NOT NULL DEFAULT 1,
+          last_accessed INTEGER NOT NULL,
+          avg_confidence REAL NOT NULL DEFAULT 0.5,
+          PRIMARY KEY (context_signature, memory_id)
+        );
+      `);
+      legacy.prepare(
+        'INSERT INTO activity_patterns (context_signature, memory_id, frequency, last_accessed, avg_confidence) VALUES (?, ?, ?, ?, ?)',
+      ).run('legacy-sig', 'legacy-mem', 5, 12345, 0.8);
+      legacy.close();
+
+      const migrated = new PatternStore({ dbPath });
+      const loaded = migrated.load();
+      expect(loaded).toHaveLength(1);
+      expect(loaded[0]).toMatchObject({
+        contextSignature: 'legacy-sig',
+        memoryId: 'legacy-mem',
+        frequency: 5,
+      });
+      expect(loaded[0]!.context).toBeUndefined();
+
+      // New saves with context must work on the migrated schema.
+      migrated.save({
+        contextSignature: 'new-sig',
+        memoryId: 'new-mem',
+        frequency: 1,
+        lastAccessed: Date.now(),
+        avgConfidence: 0.5,
+        context: {
+          projectHash: 'p',
+          branchHash: 'b',
+          fileExtension: '',
+          recentWings: ['w'],
+          recentRooms: [],
+          recentTools: [],
+          timeBucket: 'evening',
+        },
+      });
+      const reloaded = migrated.load();
+      expect(reloaded).toHaveLength(2);
+      migrated.close();
+
+      // Re-open a fresh store for afterEach cleanup symmetry.
+      store = new PatternStore({ dbPath });
     });
   });
 });

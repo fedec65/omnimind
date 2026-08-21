@@ -138,7 +138,7 @@ The original content is always backed up to the `memory_versions` table before a
 
 ## 7. Predictions
 
-Omnimind learns which memories you use in which context (project, branch, file type, time of day) and proactively suggests them once confidence reaches 70%. Predictions appear:
+Omnimind learns which memories you use in which context (project, branch, file type, time of day) and proactively suggests them once confidence reaches 50%. Predictions appear:
 
 - in the GUI **Predictions** panel,
 - via `omnimind predict` (CLI) or `omnimind_predict` (MCP),

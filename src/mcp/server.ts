@@ -32,7 +32,7 @@ import { z } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import { randomUUID } from 'crypto';
 import { MemoryStore } from '../core/MemoryStore.js';
-import { IntentPredictor, buildFingerprint } from '../prediction/IntentPredictor.js';
+import { IntentPredictor, buildFingerprint, resolveGitBranch } from '../prediction/IntentPredictor.js';
 import { MemoryBus } from '../bus/MemoryBus.js';
 import { Omnimind } from '../index.js';
 import { getNerEngineInfo } from '../core/ner/NerEngine.js';
@@ -414,8 +414,10 @@ export class OmnimindMcpServer {
 
     const fingerprint = buildFingerprint({
       projectPath: input.projectPath,
-      gitBranch: input.gitBranch ?? 'unknown',
-      currentFile: input.currentFile ?? 'unknown',
+      // Align with the recording side: real branch, empty extension when
+      // no file is known (never the literal 'unknown').
+      gitBranch: input.gitBranch ?? resolveGitBranch(input.projectPath),
+      currentFile: input.currentFile ?? '',
       recentTools: input.recentTools ?? [],
       recentWings: [],
       recentRooms: [],
@@ -502,8 +504,8 @@ export class OmnimindMcpServer {
     if (uri === 'omnimind://context/predictions') {
         const fingerprint = buildFingerprint({
           projectPath: process.cwd(),
-          gitBranch: process.env.GIT_BRANCH ?? 'unknown',
-          currentFile: process.env.CURRENT_FILE ?? 'unknown',
+          gitBranch: process.env.GIT_BRANCH ?? resolveGitBranch(process.cwd()),
+          currentFile: process.env.CURRENT_FILE ?? '',
           recentTools: [],
           recentWings: [],
           recentRooms: [],
@@ -682,10 +684,11 @@ export class OmnimindMcpServer {
   /** Public-for-tests: handle a prompts/get request by name + args. */
   async handleGetPrompt(name: string, args: Record<string, unknown>) {
     if (name === 'memory-aware') {
+      const projectPath = (args.projectPath as string) ?? process.cwd();
       const fingerprint = buildFingerprint({
-        projectPath: (args.projectPath as string) ?? process.cwd(),
-        gitBranch: (args.gitBranch as string) ?? 'unknown',
-        currentFile: (args.currentFile as string) ?? 'unknown',
+        projectPath,
+        gitBranch: (args.gitBranch as string) ?? resolveGitBranch(projectPath),
+        currentFile: (args.currentFile as string) ?? '',
         recentTools: [],
         recentWings: [],
         recentRooms: [],

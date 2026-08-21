@@ -29,6 +29,7 @@ import { readFileSync } from 'fs';
 import { resolve, extname } from 'path';
 import { fileURLToPath } from 'url';
 import { Omnimind } from './index.js';
+import { buildFingerprint, resolveGitBranch } from './prediction/IntentPredictor.js';
 import { type EntityType } from './core/types.js';
 import {
   runSetup,
@@ -320,13 +321,23 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
 
   // Predictions
   if (path === '/api/predictions' && method === 'GET') {
-    const projectPath = url.searchParams.get('projectPath') ?? process.cwd();
-    const currentFile = url.searchParams.get('currentFile') ?? 'unknown';
-    const result = await omni!.predict({
-      projectPath,
-      gitBranch: 'unknown',
-      currentFile,
-      recentTools: [],
+    const projectPathParam = url.searchParams.get('projectPath');
+    // Without explicit params, predict from the ActivityTracker's live
+    // fingerprint — the same context the learning side records in — so
+    // queries and recordings share project/branch/file components.
+    const fingerprint = projectPathParam
+      ? buildFingerprint({
+          projectPath: projectPathParam,
+          gitBranch: resolveGitBranch(projectPathParam),
+          currentFile: url.searchParams.get('currentFile') ?? '',
+          recentTools: [],
+          recentWings: [],
+          recentRooms: [],
+        })
+      : omni!.activityTracker.getCurrentFingerprint();
+    const result = await omni!.predictor.predict(fingerprint, async (id) => {
+      const r = await omni!.memoryStore.get(id);
+      return r.ok ? r.value : null;
     });
     if (!result.ok) {
       sendJson(res, 500, { error: result.error.message });

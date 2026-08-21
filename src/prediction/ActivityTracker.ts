@@ -10,8 +10,8 @@
  * - Never track system processes
  */
 
-import { watch, type FSWatcher, readFileSync } from 'fs';
-import { join, extname } from 'path';
+import { watch, type FSWatcher } from 'fs';
+import { extname } from 'path';
 import { createHash } from 'crypto';
 import {
   type ContextFingerprint,
@@ -21,7 +21,7 @@ import {
 } from '../core/types.js';
 import { type MemoryEvent, EventType } from '../bus/types.js';
 import { type MemoryBus } from '../bus/MemoryBus.js';
-import { type IntentPredictor } from './IntentPredictor.js';
+import { type IntentPredictor, resolveGitBranch } from './IntentPredictor.js';
 
 /** Safe file extensions to watch (code and docs only) */
 const SAFE_EXTENSIONS = new Set([
@@ -273,16 +273,7 @@ export class ActivityTracker {
       return this.cachedGitBranch;
     }
 
-    try {
-      // Try to read .git/HEAD
-      const headPath = join(this.config.watchDir, '.git', 'HEAD');
-      const head = readFileSync(headPath, 'utf-8').trim();
-      const match = head.match(/ref: refs\/heads\/(.*)/);
-      this.cachedGitBranch = match?.[1] ?? 'unknown';
-    } catch {
-      this.cachedGitBranch = 'unknown';
-    }
-
+    this.cachedGitBranch = resolveGitBranch(this.config.watchDir);
     this.gitBranchCacheTime = now;
     return this.cachedGitBranch;
   }
