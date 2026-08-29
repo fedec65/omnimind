@@ -4,12 +4,24 @@
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 use tauri::Manager;
+
+/// How often the supervisor polls the sidecar.
+const SUPERVISE_INTERVAL: Duration = Duration::from_secs(2);
+/// Uptime after which the crash backoff resets to its initial delay.
+const UPTIME_RESET: Duration = Duration::from_secs(30);
+/// Initial delay before respawning a dead sidecar (doubles up to UPTIME_RESET).
+const INITIAL_BACKOFF: Duration = Duration::from_secs(1);
 
 struct AppState {
     server: Mutex<Option<Child>>,
     api_base: Mutex<String>,
+    /// Cleared when the sidecar is stopped on purpose (window closed), so the
+    /// supervisor knows the death was intentional and does not respawn it.
+    want_server: AtomicBool,
 }
 
 /// Returns the base URL for the Omnimind HTTP API.
@@ -30,14 +42,24 @@ fn main() {
             app.manage(AppState {
                 server: Mutex::new(server),
                 api_base: Mutex::new(api_base),
+                want_server: AtomicBool::new(true),
             });
+
+            // Keep the sidecar alive for the lifetime of the app. Without
+            // this, a single crash (or OOM kill) leaves the GUI polling a
+            // dead port forever — the "Starting backend…" spinner that never
+            // resolves.
+            spawn_supervisor(handle);
 
             Ok(())
         })
         .on_window_event(|_app, event| {
             if let tauri::WindowEvent::Destroyed = event {
-                // Kill Node.js server on window close
+                // Kill Node.js server on window close. Flag the stop as
+                // intentional BEFORE killing so the supervisor doesn't
+                // immediately respawn the child mid-shutdown.
                 if let Some(state) = _app.try_state::<AppState>() {
+                    state.want_server.store(false, Ordering::SeqCst);
                     if let Ok(mut child) = state.server.lock() {
                         if let Some(mut c) = child.take() {
                             let _ = c.kill();
@@ -71,6 +93,111 @@ fn start_node_server(handle: &tauri::AppHandle) -> (Option<Child>, String) {
     }
 
     (None, String::new())
+}
+
+/// Watch the sidecar and restart it when it dies unexpectedly (crash, OOM
+/// kill, external kill). The respawn delay doubles on every quick death —
+/// capped at UPTIME_RESET — so a broken build can't spin the CPU, and resets
+/// to INITIAL_BACKOFF once the child has stayed up for UPTIME_RESET.
+/// Exits without respawning when the stop was intentional (window closed).
+fn spawn_supervisor(handle: tauri::AppHandle) {
+    std::thread::spawn(move || {
+        let mut backoff = INITIAL_BACKOFF;
+        let mut started_at = Instant::now();
+        loop {
+            std::thread::sleep(SUPERVISE_INTERVAL);
+
+            let state = handle.state::<AppState>();
+            if !state.want_server.load(Ordering::SeqCst) {
+                return; // stopped on purpose — the app is shutting down
+            }
+
+            // Reap the child if it has exited.
+            let needs_restart = {
+                let mut child = state.server.lock().unwrap();
+                match child.as_mut() {
+                    Some(c) => match c.try_wait() {
+                        Ok(None) => false, // still alive
+                        Ok(Some(status)) => {
+                            let uptime = started_at.elapsed();
+                            eprintln!(
+                                "[Tauri] Sidecar died unexpectedly (status: {status}, uptime: {uptime:?}) — restarting in {backoff:?}"
+                            );
+                            *child = None;
+                            if uptime >= UPTIME_RESET {
+                                backoff = INITIAL_BACKOFF;
+                            }
+                            true
+                        }
+                        Err(e) => {
+                            eprintln!("[Tauri] Failed to poll sidecar: {e}");
+                            false
+                        }
+                    },
+                    // No child tracked: the initial start never succeeded —
+                    // keep retrying at the backoff cadence.
+                    None => {
+                        eprintln!("[Tauri] Sidecar not running — trying to start it in {backoff:?}");
+                        true
+                    }
+                }
+            };
+
+            if !needs_restart {
+                continue;
+            }
+
+            std::thread::sleep(backoff);
+            backoff = (backoff * 2).min(UPTIME_RESET);
+
+            // The window may have been closed while we backed off.
+            if !state.want_server.load(Ordering::SeqCst) {
+                return;
+            }
+
+            restart_server(&handle);
+            started_at = Instant::now();
+        }
+    });
+}
+
+/// Start (or restart) the sidecar and record it in AppState, killing any
+/// child still tracked there so a restart can never leak an orphan.
+fn restart_server(handle: &tauri::AppHandle) {
+    let (server, api_base) = start_node_server(handle);
+    let state = handle.state::<AppState>();
+    {
+        let mut guard = state.server.lock().unwrap();
+        if let Some(mut old) = guard.take() {
+            let _ = old.kill();
+        }
+        *guard = server;
+    }
+    {
+        let mut base = state.api_base.lock().unwrap();
+        *base = api_base;
+    }
+}
+
+/// Redirect the sidecar's stdout/stderr to an append-mode log file under the
+/// data dir. The previous `Stdio::piped()` buffers were never drained, so a
+/// chatty server would eventually block on write (~64KB of pipe buffer) and
+/// stop answering health checks while still looking alive.
+fn sidecar_log_stdio(data_dir: &Path) -> Stdio {
+    let log_dir = data_dir.join("logs");
+    let log_path = log_dir.join("gui-server.log");
+    match std::fs::create_dir_all(&log_dir)
+        .and_then(|_| std::fs::OpenOptions::new().create(true).append(true).open(&log_path))
+    {
+        Ok(file) => Stdio::from(file),
+        Err(e) => {
+            eprintln!(
+                "[Tauri] Cannot open sidecar log {:?} ({}); discarding sidecar output",
+                log_path, e
+            );
+            Stdio::null()
+        }
+    }
 }
 
 /// Recursively copy a directory (std-only, no extra crates).
@@ -143,8 +270,8 @@ fn try_start_bundled_server(handle: &tauri::AppHandle) -> Option<(Child, u16)> {
         .env("OMNIMIND_DATA_DIR", &data_dir)
         .env("TRANSFORMERS_CACHE", &transformers_cache)
         .env("OMNIMIND_SKIP_ADAPTERS", "1")
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stdout(sidecar_log_stdio(&data_dir))
+        .stderr(sidecar_log_stdio(&data_dir))
         .spawn()
         .ok()?;
 
@@ -169,12 +296,15 @@ fn try_start_dev_server() -> Option<(Child, u16)> {
 
     let port = find_available_port()?;
 
+    // Same canonical data dir as the bundled server, for its logs.
+    let log_dir = std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".omnimind"));
+
     let child = Command::new("node")
         .arg(&server_script)
         .env("OMNIMIND_PORT", port.to_string())
         .env("OMNIMIND_SKIP_ADAPTERS", "1")
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stdout(log_dir.as_deref().map(sidecar_log_stdio).unwrap_or_else(Stdio::null))
+        .stderr(log_dir.as_deref().map(sidecar_log_stdio).unwrap_or_else(Stdio::null))
         .spawn()
         .ok()?;
 

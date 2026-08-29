@@ -7,10 +7,17 @@
 import { invoke } from '@tauri-apps/api/core';
 
 let baseUrlPromise: Promise<string> | null = null;
+let baseUrlResolvedAt = 0;
+// The Rust supervisor may respawn the sidecar on a NEW port after a crash,
+// so re-ask the shell for the base URL once the cached one goes stale.
+const BASE_URL_REFRESH_MS = 10_000;
 
 async function getBaseUrl(): Promise<string> {
-  if (baseUrlPromise) return baseUrlPromise;
+  if (baseUrlPromise && Date.now() - baseUrlResolvedAt < BASE_URL_REFRESH_MS) {
+    return baseUrlPromise;
+  }
 
+  baseUrlResolvedAt = Date.now();
   baseUrlPromise = (async () => {
     // Try Tauri invoke first (bundled app)
     if (typeof window !== 'undefined' && (window as any).__TAURI__) {
