@@ -32,7 +32,7 @@ fn get_api_base(state: tauri::State<AppState>) -> String {
 }
 
 fn main() {
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .setup(|app| {
             let handle = app.handle().clone();
@@ -55,22 +55,37 @@ fn main() {
         })
         .on_window_event(|_app, event| {
             if let tauri::WindowEvent::Destroyed = event {
-                // Kill Node.js server on window close. Flag the stop as
-                // intentional BEFORE killing so the supervisor doesn't
-                // immediately respawn the child mid-shutdown.
-                if let Some(state) = _app.try_state::<AppState>() {
-                    state.want_server.store(false, Ordering::SeqCst);
-                    if let Ok(mut child) = state.server.lock() {
-                        if let Some(mut c) = child.take() {
-                            let _ = c.kill();
-                        }
-                    }
-                }
+                // Kill Node.js server on window close
+                stop_server(_app.app_handle());
             }
         })
         .invoke_handler(tauri::generate_handler![get_api_base])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application");
+
+    app.run(|app_handle, event| {
+        if let tauri::RunEvent::Exit = event {
+            // WindowEvent::Destroyed covers window-close, but on macOS Cmd+Q
+            // can terminate the app without ever firing it — without this,
+            // the backend would outlive the GUI as an orphaned process.
+            stop_server(app_handle);
+        }
+    });
+}
+
+/// Mark the sidecar as intentionally stopped and kill it. Shared by the
+/// window-destroyed and app-exit paths.
+fn stop_server(handle: &tauri::AppHandle) {
+    if let Some(state) = handle.try_state::<AppState>() {
+        // Flag the stop as intentional BEFORE killing so the supervisor
+        // doesn't immediately respawn the child mid-shutdown.
+        state.want_server.store(false, Ordering::SeqCst);
+        if let Ok(mut child) = state.server.lock() {
+            if let Some(mut c) = child.take() {
+                let _ = c.kill();
+            }
+        }
+    }
 }
 
 /// Find an available TCP port on localhost.
@@ -161,31 +176,61 @@ fn spawn_supervisor(handle: tauri::AppHandle) {
     });
 }
 
-/// Start (or restart) the sidecar and record it in AppState, killing any
-/// child still tracked there so a restart can never leak an orphan.
+/// Start (or restart) the sidecar and record it in AppState. The entire
+/// spawn runs under the `server` mutex and re-checks `want_server` after
+/// the fork: the Destroyed handler sets the flag *before* taking the same
+/// mutex, so either shutdown ran first (we skip spawning entirely) or it is
+/// blocked on us (we see the flag and kill the fresh child). A restart can
+/// therefore never publish a child that shutdown will not clean up.
 fn restart_server(handle: &tauri::AppHandle) {
-    let (server, api_base) = start_node_server(handle);
     let state = handle.state::<AppState>();
-    {
-        let mut guard = state.server.lock().unwrap();
-        if let Some(mut old) = guard.take() {
-            let _ = old.kill();
-        }
-        *guard = server;
+    let mut guard = state.server.lock().unwrap();
+
+    if !state.want_server.load(Ordering::SeqCst) {
+        return; // shutdown already began — don't spawn at all
     }
+
+    let (server, api_base) = start_node_server(handle);
+
+    if !state.want_server.load(Ordering::SeqCst) {
+        // The window was destroyed while we spawned — kill, don't leak.
+        if let Some(mut child) = server {
+            let _ = child.kill();
+        }
+        return;
+    }
+
+    if let Some(mut old) = guard.take() {
+        let _ = old.kill();
+    }
+    *guard = server;
+    drop(guard);
+
     {
         let mut base = state.api_base.lock().unwrap();
         *base = api_base;
     }
 }
 
+/// Rotate the sidecar log once it passes this size; one previous generation
+/// (`gui-server.log.1`) is kept, bounding disk usage at ~2x this cap.
+const LOG_ROTATE_SIZE: u64 = 5 * 1024 * 1024;
+
 /// Redirect the sidecar's stdout/stderr to an append-mode log file under the
 /// data dir. The previous `Stdio::piped()` buffers were never drained, so a
 /// chatty server would eventually block on write (~64KB of pipe buffer) and
-/// stop answering health checks while still looking alive.
+/// stop answering health checks while still looking alive. Past the rotation
+/// cap the current log is moved aside (replacing the previous generation).
 fn sidecar_log_stdio(data_dir: &Path) -> Stdio {
     let log_dir = data_dir.join("logs");
     let log_path = log_dir.join("gui-server.log");
+    if let Ok(meta) = std::fs::metadata(&log_path) {
+        if meta.len() > LOG_ROTATE_SIZE {
+            let rotated = log_dir.join("gui-server.log.1");
+            let _ = std::fs::remove_file(&rotated);
+            let _ = std::fs::rename(&log_path, &rotated);
+        }
+    }
     match std::fs::create_dir_all(&log_dir)
         .and_then(|_| std::fs::OpenOptions::new().create(true).append(true).open(&log_path))
     {
