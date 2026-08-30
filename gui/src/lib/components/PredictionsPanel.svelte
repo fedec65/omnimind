@@ -29,6 +29,14 @@
     }
   }
 
+  // Load on mount (the panel is remounted on each tab switch, so this also
+  // refreshes every time the Predictions tab is opened) — same pattern as
+  // StatsPanel/TimelineView. Without it the tab opens empty until the user
+  // clicks Refresh.
+  $effect(() => {
+    loadPredictions();
+  });
+
   const layerNames = ['Verbatim', 'Compressed', 'Concept', 'Wisdom'];
   const layerColors = ['bg-blue-500/20 text-blue-300', 'bg-amber-500/20 text-amber-300', 'bg-purple-500/20 text-purple-300', 'bg-emerald-500/20 text-emerald-300'];
 </script>
