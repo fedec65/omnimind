@@ -120,6 +120,7 @@ export class Omnimind {
   readonly shared: SharedClient | null;
   private sharedAuthFailed = false;
   private sharedSuggestions: SharedSuggestion[] = [];
+  private sharedCache: { key: string; text: string; at: number } | null = null;
   private readonly patternStore: PatternStore;
 
   private constructor(
@@ -745,7 +746,44 @@ export class Omnimind {
     const fingerprint = this.activityTracker.getCurrentFingerprint();
     const injection = await this.contextInjector.inject(fingerprint);
     if (!injection.ok) return err(injection.error);
-    return ok(injection.value.text);
+    const sharedBlock = await this.buildSharedContextBlock(fingerprint);
+    return ok(injection.value.text + sharedBlock);
+  }
+
+  /**
+   * Build the <omnimind_shared> context block from the shared server.
+   * Best-effort: any failure (or missing config) yields an empty string —
+   * local memory never depends on the shared server.
+   */
+  private async buildSharedContextBlock(fingerprint: ContextFingerprint): Promise<string> {
+    if (!this.sharedAvailable()) return '';
+
+    const key = `${fingerprint.projectHash}:${fingerprint.branchHash}:${fingerprint.fileExtension}`;
+    if (this.sharedCache && this.sharedCache.key === key && Date.now() - this.sharedCache.at < 60_000) {
+      return this.sharedCache.text;
+    }
+
+    const queryParts = [...fingerprint.recentWings, ...fingerprint.recentRooms]
+      .filter((p) => p.length > 0 && p !== 'unknown');
+    const query = queryParts.length > 0 ? queryParts.join(' ') : 'general';
+
+    const result = await this.shared!.search(query, 3);
+    const suggestions = this.getSharedSuggestions().slice(0, 3);
+    const visible = result.ok ? result.value.filter((r) => r.item.supersededAt === null) : [];
+    if (!result.ok) this.handleSharedError(result.error);
+    if (visible.length === 0 && suggestions.length === 0) return '';
+
+    const lines: string[] = [];
+    for (const s of suggestions) {
+      lines.push(`shared_suggestion [L${s.level}] ${s.content.substring(0, 200)} (id: ${s.memoryId.substring(0, 8)})`);
+    }
+    for (const r of visible) {
+      lines.push(`[${r.item.visibility}] ${r.item.content.substring(0, 200)}`);
+    }
+
+    const text = `\n<omnimind_shared count="${lines.length}">\n${lines.join('\n')}\n</omnimind_shared>\n`;
+    this.sharedCache = { key, text, at: Date.now() };
+    return text;
   }
 
   /** Get activity tracker stats for debugging */
