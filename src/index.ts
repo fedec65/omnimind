@@ -66,12 +66,15 @@ import {
   type ArchivedMemory,
   MemoryLayer,
   MemoryLayerId,
+  TimeConstants,
   ok,
   err,
 } from './core/types.js';
 import { extractRelations } from './core/RelationExtractor.js';
 import { configureNerEngine, getNerEngineInfo, initNerEngine, type NerEngineInfo } from './core/ner/NerEngine.js';
 import { type Prediction } from './prediction/IntentPredictor.js';
+import { McpSharedClient } from './shared/McpSharedClient.js';
+import type { SharedClient, SharedError, SharedSuggestion, SharedToolTransport } from './shared/types.js';
 
 // ─── Configuration ────────────────────────────────────────────────
 
@@ -89,6 +92,12 @@ export interface OmnimindConfig {
    * and the heuristic serves extractions until the model is ready.
    */
   nerEngine?: 'heuristic' | 'onnx' | undefined;
+  /**
+   * Injectable transport for the shared memory server client (tests).
+   * When provided, a SharedClient is always created regardless of the
+   * sharedEnabled/sharedServerUrl/sharedToken settings.
+   */
+  sharedTransport?: SharedToolTransport | undefined;
   /** Startup progress hook — called with coarse phases: 'store', 'bus', 'ready' */
   onProgress?: ((phase: string) => void) | undefined;
 }
@@ -108,6 +117,9 @@ export class Omnimind {
   readonly bus: MemoryBus;
   readonly activityTracker: ActivityTracker;
   readonly contextInjector: ContextInjector;
+  readonly shared: SharedClient | null;
+  private sharedAuthFailed = false;
+  private sharedSuggestions: SharedSuggestion[] = [];
   private readonly patternStore: PatternStore;
 
   private constructor(
@@ -117,6 +129,7 @@ export class Omnimind {
     patternStore: PatternStore,
     activityTracker: ActivityTracker,
     contextInjector: ContextInjector,
+    shared: SharedClient | null,
   ) {
     this.memoryStore = store;
     this.predictor = predictor;
@@ -125,6 +138,7 @@ export class Omnimind {
     this.patternStore = patternStore;
     this.activityTracker = activityTracker;
     this.contextInjector = contextInjector;
+    this.shared = shared;
   }
 
   /**
@@ -211,7 +225,31 @@ export class Omnimind {
       return r.ok ? r.value : null;
     });
 
-    const omni = new Omnimind(store, bus, predictor, patternStore, activityTracker, contextInjector);
+    // ─── Shared memory server (optional, best-effort) ───────────
+    // The shared server is a remote MCP endpoint hosting promoted
+    // (L2/L3) team/org memory. If unreachable or unauthorized, the
+    // client keeps working local-only — never the other way around.
+    let shared: SharedClient | null = null;
+    if (config.sharedTransport) {
+      shared = new McpSharedClient({ serverUrl: '', token: '' }, config.sharedTransport);
+    } else {
+      const sharedEnabled = store.getSetting('sharedEnabled');
+      const sharedUrl = store.getSetting('sharedServerUrl');
+      const sharedToken = store.getSetting('sharedToken');
+      if (
+        sharedEnabled.ok && sharedEnabled.value === 'true' &&
+        sharedUrl.ok && sharedUrl.value !== null && sharedUrl.value.length > 0 &&
+        sharedToken.ok && sharedToken.value !== null && sharedToken.value.length > 0
+      ) {
+        try {
+          shared = new McpSharedClient({ serverUrl: sharedUrl.value, token: sharedToken.value });
+        } catch (error) {
+          console.error(`[Omnimind] Shared client failed: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
+    }
+
+    const omni = new Omnimind(store, bus, predictor, patternStore, activityTracker, contextInjector, shared);
     console.log(`[Omnimind] Initialized at ${dbPath}`);
 
     // Auto-evict stale memories on startup (configurable via setting)
@@ -486,6 +524,11 @@ export class Omnimind {
       }
     }
 
+    // Promotion to L2/L3: suggest publishing to the shared server
+    if (updateResult.ok && aged.layer >= MemoryLayer.Concept && aged.layer !== memory.layer) {
+      this.noteSharedSuggestion(aged);
+    }
+
     console.log(`[Omnimind] Aged memory ${memoryId.substring(0, 8)}: L${memory.layer} → L${targetLayer}`);
 
     return ok(aged);
@@ -750,6 +793,82 @@ export class Omnimind {
   /** Set a setting value */
   setSetting(key: string, value: string): Result<void> {
     return this.memoryStore.setSetting(key, value);
+  }
+
+  // ─── Shared Memory Server ────────────────────────────────────────
+
+  /** True when the shared server client is configured and authenticated. */
+  sharedAvailable(): boolean {
+    return this.shared !== null && !this.sharedAuthFailed;
+  }
+
+  /** Local L2/L3 memories pending a publish decision (max 20, 24h TTL). */
+  getSharedSuggestions(): SharedSuggestion[] {
+    const cutoff = Date.now() - TimeConstants.DAY;
+    return this.sharedSuggestions.filter((s) => s.suggestedAt >= cutoff);
+  }
+
+  /**
+   * Publish a local L2/L3 memory to the shared server.
+   * Explicit user action — content leaves this machine.
+   */
+  async publishMemoryToShared(
+    id: string,
+    opts: {
+      visibility: 'team' | 'org';
+      workspaceId?: string | undefined;
+      trustWeight?: number | undefined;
+    },
+  ): Promise<Result<string, Error>> {
+    if (!this.shared || this.sharedAuthFailed) {
+      return err(new Error('Shared memory server not configured'));
+    }
+    const mem = await this.memoryStore.get(id);
+    if (!mem.ok) return err(mem.error);
+    if (!mem.value) return err(new Error(`Memory not found: ${id}`));
+
+    const memory = mem.value;
+    if (memory.layer !== MemoryLayer.Concept && memory.layer !== MemoryLayer.Wisdom) {
+      return err(new Error(`Only L2/L3 memories can be published (memory is L${memory.layer})`));
+    }
+
+    const result = await this.shared.publish({
+      level: memory.layer,
+      visibility: opts.visibility,
+      content: memory.content,
+      ...(opts.workspaceId !== undefined ? { workspaceId: opts.workspaceId } : {}),
+      ...(opts.trustWeight !== undefined ? { trustWeight: opts.trustWeight } : {}),
+    });
+    if (!result.ok) {
+      this.handleSharedError(result.error);
+      return err(result.error);
+    }
+    this.sharedSuggestions = this.sharedSuggestions.filter((s) => s.memoryId !== id);
+    return ok(result.value);
+  }
+
+  /** Record a publish suggestion for a freshly promoted L2/L3 memory. */
+  private noteSharedSuggestion(memory: Memory): void {
+    if (this.shared === null) return;
+    this.sharedSuggestions = this.sharedSuggestions.filter((s) => s.memoryId !== memory.id);
+    this.sharedSuggestions.unshift({
+      memoryId: memory.id,
+      content: memory.content,
+      level: memory.layer,
+      suggestedAt: Date.now(),
+    });
+    if (this.sharedSuggestions.length > 20) this.sharedSuggestions.length = 20;
+  }
+
+  /** 401 → disable shared functionality until the user renews the token. */
+  private handleSharedError(error: SharedError): void {
+    if (error.kind !== 'unauthorized') return;
+    this.sharedAuthFailed = true;
+    this.setSetting('lastSharedError', `unauthorized:${Date.now()}`);
+    console.error(
+      '[Omnimind] Shared server unauthorized — token revoked or invalid. ' +
+      'Update it with: omnimind shared config --token <new-token>',
+    );
   }
 
   /** Report which NER engine is configured and which one is serving */
