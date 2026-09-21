@@ -112,6 +112,18 @@ const CompressContextInput = z.object({
   tokenBudget: z.number().min(1).max(2000).describe('Max tokens in the output'),
 });
 
+const SharedSearchInput = z.object({
+  query: z.string().min(1).max(1000).describe('Search query for the shared team/org memory server'),
+  limit: z.number().min(1).max(50).optional().describe('Maximum results'),
+});
+
+const SharedPublishInput = z.object({
+  memory_id: z.string().min(1).describe('ID of a local L2 (concept) or L3 (wisdom) memory to publish'),
+  visibility: z.enum(['team', 'org']).describe('Who can see the published item on the shared server'),
+  workspace_id: z.string().optional().describe('Required when visibility=team'),
+  trust_weight: z.number().min(0).max(1).optional().describe('Confidence in this content (0-1)'),
+});
+
 // ─── Server Implementation ────────────────────────────────────────
 
 export class OmnimindMcpServer {
@@ -252,6 +264,21 @@ export class OmnimindMcpServer {
           description: 'Compress a chat history to a token budget while preserving any <omnimind_predictions> blocks intact. Use this when the host LLM is about to truncate a long context and you want Omnimind\'s predictions to survive.',
           inputSchema: convertZodToJsonSchema(CompressContextInput),
         },
+        {
+          name: 'omnimind_shared_search',
+          description: 'Search the shared team/org memory server — L2/L3 knowledge promoted by you and your teammates. Requires shared server configuration (omnimind shared config).',
+          inputSchema: convertZodToJsonSchema(SharedSearchInput),
+        },
+        {
+          name: 'omnimind_shared_publish',
+          description: 'Publish a local L2/L3 memory to the shared team/org memory server. This shares content beyond this machine — get explicit user approval first.',
+          inputSchema: convertZodToJsonSchema(SharedPublishInput),
+        },
+        {
+          name: 'omnimind_shared_status',
+          description: 'Check connectivity and statistics of the shared team/org memory server.',
+          inputSchema: { type: 'object', properties: {} },
+        },
       ],
     }));
 
@@ -275,6 +302,12 @@ export class OmnimindMcpServer {
             return await this.handleSync(request.params.arguments);
           case 'omnimind_compress_context':
             return await this.handleCompressContext(request.params.arguments);
+          case 'omnimind_shared_search':
+            return await this.handleSharedSearch(request.params.arguments);
+          case 'omnimind_shared_publish':
+            return await this.handleSharedPublish(request.params.arguments);
+          case 'omnimind_shared_status':
+            return await this.handleSharedStatus();
           default:
             throw new Error(`Unknown tool: ${request.params.name}`);
         }
@@ -865,6 +898,91 @@ export class OmnimindMcpServer {
       content: [
         { type: 'text', text: r.text },
         { type: 'text', text: r.warning ? `${summary}\n${r.warning}` : summary },
+      ],
+    };
+  }
+
+  private sharedNotConfigured() {
+    return {
+      content: [
+        {
+          type: 'text' as const,
+          text: 'Shared memory server not configured. Set it up with: omnimind shared config --url <url> --token <token>',
+        },
+      ],
+    };
+  }
+
+  private async handleSharedSearch(args: unknown) {
+    const input = SharedSearchInput.parse(args);
+    if (!this.omni?.sharedAvailable() || !this.omni.shared) {
+      return this.sharedNotConfigured();
+    }
+
+    const result = await this.omni.shared.search(input.query, input.limit);
+    if (!result.ok) throw result.error;
+
+    if (result.value.length === 0) {
+      return { content: [{ type: 'text' as const, text: 'No shared memories matched.' }] };
+    }
+
+    const lines = result.value.map((r, i) =>
+      `${i + 1}. [${r.item.visibility}] (score ${r.score.toFixed(3)}, ${r.matchType})\n   ${r.item.content.substring(0, 300)}${r.item.content.length > 300 ? '...' : ''}`,
+    );
+
+    return {
+      content: [
+        {
+          type: 'text' as const,
+          text: `Found ${result.value.length} shared memories:\n\n${lines.join('\n\n')}`,
+        },
+      ],
+    };
+  }
+
+  private async handleSharedPublish(args: unknown) {
+    const input = SharedPublishInput.parse(args);
+    if (!this.omni?.sharedAvailable()) {
+      return this.sharedNotConfigured();
+    }
+    if (input.visibility === 'team' && !input.workspace_id) {
+      return {
+        content: [{ type: 'text' as const, text: 'Error: workspace_id is required when visibility=team' }],
+        isError: true,
+      };
+    }
+
+    const result = await this.omni.publishMemoryToShared(input.memory_id, {
+      visibility: input.visibility,
+      ...(input.workspace_id !== undefined ? { workspaceId: input.workspace_id } : {}),
+      ...(input.trust_weight !== undefined ? { trustWeight: input.trust_weight } : {}),
+    });
+    if (!result.ok) throw result.error;
+
+    return {
+      content: [
+        {
+          type: 'text' as const,
+          text: `Published to shared memory with id ${result.value}.`,
+        },
+      ],
+    };
+  }
+
+  private async handleSharedStatus() {
+    if (!this.omni?.sharedAvailable() || !this.omni.shared) {
+      return this.sharedNotConfigured();
+    }
+
+    const result = await this.omni.shared.status();
+    if (!result.ok) throw result.error;
+
+    return {
+      content: [
+        {
+          type: 'text' as const,
+          text: `Shared server OK — ${result.value.items} items visible (${result.value.superseded} superseded).`,
+        },
       ],
     };
   }
