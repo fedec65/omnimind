@@ -197,10 +197,11 @@
       await api.setSetting('sharedEnabled', form.sharedEnabled);
       await api.setSetting('sharedServerUrl', form.sharedServerUrl);
       await api.setSetting('sharedToken', form.sharedToken);
+      settings = await api.settings();
       const result = await api.sharedTest();
       sharedTestOk = result.connected;
       sharedTestMsg = result.connected
-        ? `Connected — ${result.items} shared items visible (${result.superseded} superseded).`
+        ? `Connected — ${result.items ?? 0} shared items visible (${result.superseded ?? 0} superseded).`
         : `Not connected: ${result.reason ?? 'unknown'}${result.message ? ` — ${result.message}` : ''}`;
     } catch (e) {
       sharedTestOk = false;

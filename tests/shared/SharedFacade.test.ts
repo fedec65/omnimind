@@ -32,37 +32,6 @@ class FakeTransport implements SharedToolTransport {
   async close(): Promise<void> {}
 }
 
-const _SEARCH_PAYLOAD = JSON.stringify([
-  {
-    item: {
-      id: 's1',
-      content: 'Org-wide decision: monorepo',
-      level: 3,
-      visibility: 'org',
-      metadata: {},
-      trustWeight: 0.9,
-      createdAt: 1,
-      supersededAt: null,
-    },
-    score: 0.88,
-    matchType: 'hybrid',
-  },
-  {
-    item: {
-      id: 's2',
-      content: 'Old superseded item',
-      level: 2,
-      visibility: 'org',
-      metadata: {},
-      trustWeight: 0.5,
-      createdAt: 1,
-      supersededAt: 1720000000000,
-    },
-    score: 0.5,
-    matchType: 'hybrid',
-  },
-]);
-
 describe('Omnimind facade — shared server wiring', () => {
   let tmpDir: string;
 

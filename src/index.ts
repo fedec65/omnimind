@@ -882,6 +882,7 @@ export class Omnimind {
       return err(result.error);
     }
     this.sharedSuggestions = this.sharedSuggestions.filter((s) => s.memoryId !== id);
+    this.sharedCache = null;
     return ok(result.value);
   }
 

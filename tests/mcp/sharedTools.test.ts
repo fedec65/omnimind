@@ -76,11 +76,14 @@ describe('MCP shared tools', () => {
       },
     });
     const handler = (server as any).handleSharedPublish.bind(server);
-    const result = await handler({ memory_id: 'mem-1', visibility: 'team', workspace_id: 'ws-9' });
+    const result = await handler({ memory_id: 'mem-1', visibility: 'team', workspace_id: 'ws-9', trust_weight: 0.7 });
 
     expect(result.isError).toBeUndefined();
     expect(result.content[0].text).toContain('new-uuid');
-    expect(received).toEqual({ id: 'mem-1', opts: { visibility: 'team', workspaceId: 'ws-9' } });
+    expect(received).toEqual({
+      id: 'mem-1',
+      opts: { visibility: 'team', workspaceId: 'ws-9', trustWeight: 0.7 },
+    });
   });
 
   it('omnimind_shared_publish requires workspace_id for team visibility', async () => {

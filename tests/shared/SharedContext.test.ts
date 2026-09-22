@@ -113,6 +113,29 @@ describe('getContextInjection — omnimind_shared block', () => {
     await omni.close();
   });
 
+  it('falls back to suggestion-only block when the shared search fails', async () => {
+    const fake = new FakeTransport();
+    fake.failNext = 3; // exhaust retries
+    const omni = await Omnimind.create({ dataDir: tmpDir, adapters: false, sharedTransport: fake });
+
+    const stored = await omni.store('Promoted concept to publish', { wing: 'eng' });
+    expect(stored.ok).toBe(true);
+    if (!stored.ok) return;
+    const updated = await omni.memoryStore.update(stored.value.id, { layer: 2 });
+    expect(updated.ok).toBe(true);
+    if (!updated.ok) return;
+    (omni as any).noteSharedSuggestion(updated.value);
+
+    const injection = await omni.getContextInjection();
+    expect(injection.ok).toBe(true);
+    if (!injection.ok) return;
+    expect(injection.value).toContain('<omnimind_shared');
+    expect(injection.value).toContain('shared_suggestion');
+    expect(injection.value).toContain('Promoted concept to publish');
+    expect(fake.calls).toBe(3); // search failed and exhausted retries
+    await omni.close();
+  });
+
   it('caches results for 60s per fingerprint', async () => {
     const fake = new FakeTransport();
     fake.enqueueText(JSON.stringify([RESULT('a', 'Cached shared memory')]));

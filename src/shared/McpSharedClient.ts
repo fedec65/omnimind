@@ -241,6 +241,7 @@ export class McpSharedClient implements SharedClient {
           matchType?: unknown;
         };
         if (typeof r?.item?.id !== 'string' || typeof r.item.content !== 'string') continue;
+        if (r.item.supersededAt !== null && r.item.supersededAt !== undefined) continue;
         results.push({
           item: {
             id: r.item.id,

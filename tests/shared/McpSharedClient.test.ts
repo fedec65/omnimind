@@ -125,6 +125,46 @@ describe('McpSharedClient', () => {
     expect(result.value[0]!.item.id).toBe('ok');
   });
 
+  it('search excludes superseded entries (non-null supersededAt)', async () => {
+    transport.enqueueText(
+      JSON.stringify([
+        {
+          item: {
+            id: 'active-1',
+            content: 'Still valid shared memory',
+            level: 2,
+            visibility: 'org',
+            metadata: {},
+            trustWeight: 0.8,
+            createdAt: 1720000000000,
+            supersededAt: null,
+          },
+          score: 0.9,
+        },
+        {
+          item: {
+            id: 'old-1',
+            content: 'Superseded shared memory',
+            level: 2,
+            visibility: 'org',
+            metadata: {},
+            trustWeight: 0.5,
+            createdAt: 1710000000000,
+            supersededAt: 1720000000000,
+          },
+          score: 0.8,
+        },
+      ]),
+    );
+
+    const result = await client.search('q');
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.length).toBe(1);
+    expect(result.value[0]!.item.id).toBe('active-1');
+  });
+
   it('search maps non-array payload to malformed error', async () => {
     transport.enqueueText('{"unexpected": true}');
 

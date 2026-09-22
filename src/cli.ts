@@ -497,7 +497,15 @@ Shared memory server commands:
       if (!omni.sharedAvailable()) {
         console.log('Shared memory server: not configured (or token unauthorized).');
         const last = omni.getSetting('lastSharedError');
-        if (last.ok && last.value) console.log(`Last error: ${last.value}`);
+        if (last.ok && last.value) {
+          const sep = last.value.indexOf(':');
+          const epoch = sep >= 0 ? Number(last.value.slice(sep + 1)) : NaN;
+          console.log(
+            sep >= 0 && Number.isFinite(epoch)
+              ? `Last error: ${last.value.slice(0, sep)} at ${new Date(epoch).toISOString()}`
+              : `Last error: ${last.value}`,
+          );
+        }
       } else {
         const result = await omni.shared!.status();
         if (result.ok) {

@@ -469,8 +469,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
   }
 
   // Shared server connectivity test — builds an ad-hoc client from the
-  // CURRENT settings so the GUI can test unsaved... saved-but-not-applied
-  // configurations without a restart.
+  // currently persisted settings, so the GUI can verify them without a restart.
   if (path === '/api/shared/test' && method === 'GET') {
     const enabled = omni!.getSetting('sharedEnabled');
     if (enabled.ok && enabled.value !== null && enabled.value !== 'true') {
