@@ -29,6 +29,7 @@ import { readFileSync } from 'fs';
 import { resolve, extname } from 'path';
 import { fileURLToPath } from 'url';
 import { Omnimind } from './index.js';
+import { McpSharedClient } from './shared/McpSharedClient.js';
 import { buildFingerprint, resolveGitBranch } from './prediction/IntentPredictor.js';
 import { type EntityType } from './core/types.js';
 import {
@@ -465,6 +466,43 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
       sendJson(res, 200, { ok: true });
       return;
     }
+  }
+
+  // Shared server connectivity test — builds an ad-hoc client from the
+  // CURRENT settings so the GUI can test unsaved... saved-but-not-applied
+  // configurations without a restart.
+  if (path === '/api/shared/test' && method === 'GET') {
+    const enabled = omni!.getSetting('sharedEnabled');
+    if (enabled.ok && enabled.value !== null && enabled.value !== 'true') {
+      sendJson(res, 200, { connected: false, reason: 'disabled' });
+      return;
+    }
+    const url = omni!.getSetting('sharedServerUrl');
+    const token = omni!.getSetting('sharedToken');
+    if ((!url.ok || !url.value) || (!token.ok || !token.value)) {
+      sendJson(res, 200, { connected: false, reason: 'not configured' });
+      return;
+    }
+    const client = new McpSharedClient({ serverUrl: url.value, token: token.value, timeoutMs: 5000 });
+    try {
+      const status = await client.status();
+      if (status.ok) {
+        sendJson(res, 200, {
+          connected: true,
+          items: status.value.items,
+          superseded: status.value.superseded,
+        });
+      } else {
+        sendJson(res, 200, {
+          connected: false,
+          reason: status.error.kind,
+          message: status.error.message,
+        });
+      }
+    } finally {
+      await client.close().catch(() => {});
+    }
+    return;
   }
 
   // MCP client setup (Connect AI tools)
