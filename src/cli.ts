@@ -39,6 +39,7 @@ const commands: Record<string, (args: string[]) => Promise<void>> = {
   wipe,
   'rebuild-graph': rebuildGraphCommand,
   bus: busCommand,
+  shared: sharedCommand,
   setup: setupCommand,
 };
 
@@ -141,6 +142,14 @@ Commands:
   bus status              Show connected tools and subscriptions
   bus sync [tool-id]      Pull updates from specific tool
   bus conflicts           List unresolved conflicts
+
+  shared config --url <url> --token <token> [--enable|--disable]
+                          Configure the shared team/org memory server
+  shared status           Test connection and show shared stats
+  shared search <query>   Search the shared memory server
+  shared publish --id <id> --visibility org|team [--workspace-id <uuid>]
+                          Publish a local L2/L3 memory to the shared server
+  shared suggestions      List local L2/L3 memories pending publish
 
 Examples:
   omnimind init
@@ -442,6 +451,130 @@ Bus commands:
     }
     default:
       console.error(`Unknown bus command: ${subcmd}`);
+      process.exit(1);
+  }
+
+  await omni.close();
+}
+
+async function sharedCommand(args: string[]): Promise<void> {
+  const subcmd = args[0];
+  if (!subcmd || subcmd === '--help') {
+    console.log(`
+Shared memory server commands:
+  shared config --url <url> --token <token> [--enable|--disable]
+  shared status              Test connection and show shared stats
+  shared search <query> [--limit N]
+  shared publish --id <memoryId> --visibility org|team [--workspace-id <uuid>]
+  shared suggestions         List local L2/L3 memories pending publish
+`);
+    return;
+  }
+
+  const omni = await Omnimind.create({
+    adapters: false,
+    dataDir: process.env.OMNIMIND_DATA_DIR ?? undefined,
+  });
+
+  switch (subcmd) {
+    case 'config': {
+      const url = parseFlag(args, '--url');
+      const token = parseFlag(args, '--token');
+      if (url === null && token === null && !args.includes('--enable') && !args.includes('--disable')) {
+        console.error('Usage: omnimind shared config --url <url> --token <token> [--enable|--disable]');
+        await omni.close();
+        process.exit(1);
+      }
+      if (url !== null) omni.setSetting('sharedServerUrl', url);
+      if (token !== null) omni.setSetting('sharedToken', token);
+      if (args.includes('--enable')) omni.setSetting('sharedEnabled', 'true');
+      if (args.includes('--disable')) omni.setSetting('sharedEnabled', 'false');
+      console.log('Shared server configuration saved. Restart the MCP server / app to apply.');
+      break;
+    }
+
+    case 'status': {
+      if (!omni.sharedAvailable()) {
+        console.log('Shared memory server: not configured (or token unauthorized).');
+        const last = omni.getSetting('lastSharedError');
+        if (last.ok && last.value) console.log(`Last error: ${last.value}`);
+      } else {
+        const result = await omni.shared!.status();
+        if (result.ok) {
+          console.log(`Shared server OK — ${result.value.items} items visible (${result.value.superseded} superseded).`);
+        } else {
+          console.error(`Error: ${result.error.message}`);
+        }
+      }
+      break;
+    }
+
+    case 'search': {
+      const query = args[1];
+      if (!query) {
+        console.error('Usage: omnimind shared search <query> [--limit N]');
+        await omni.close();
+        process.exit(1);
+      }
+      if (!omni.sharedAvailable()) {
+        console.log('Shared memory server: not configured. Run: omnimind shared config --help');
+        break;
+      }
+      const limit = parseInt(parseFlag(args, '--limit') ?? '10', 10);
+      const result = await omni.shared!.search(query, limit);
+      if (!result.ok) {
+        console.error(`Error: ${result.error.message}`);
+        break;
+      }
+      if (result.value.length === 0) {
+        console.log('No shared memories found.');
+      } else {
+        console.log(`Found ${result.value.length} shared memories:\n`);
+        for (const [i, r] of result.value.entries()) {
+          console.log(`${i + 1}. [${r.item.visibility}] ${r.matchType} (score: ${r.score.toFixed(3)})`);
+          console.log(`   ${r.item.content.substring(0, 200)}${r.item.content.length > 200 ? '...' : ''}\n`);
+        }
+      }
+      break;
+    }
+
+    case 'publish': {
+      const id = parseFlag(args, '--id');
+      const visibility = parseFlag(args, '--visibility');
+      const workspaceId = parseFlag(args, '--workspace-id');
+      if (id === null || (visibility !== 'org' && visibility !== 'team')) {
+        console.error('Usage: omnimind shared publish --id <memoryId> --visibility org|team [--workspace-id <uuid>]');
+        await omni.close();
+        process.exit(1);
+      }
+      const result = await omni.publishMemoryToShared(id, {
+        visibility,
+        ...(workspaceId !== null ? { workspaceId } : {}),
+      });
+      if (result.ok) {
+        console.log(`✓ Published with shared id ${result.value}`);
+      } else {
+        console.error(`Error: ${result.error.message}`);
+      }
+      break;
+    }
+
+    case 'suggestions': {
+      const suggestions = omni.getSharedSuggestions();
+      if (suggestions.length === 0) {
+        console.log('No pending suggestions.');
+      } else {
+        console.log(`Pending publish suggestions (${suggestions.length}):\n`);
+        for (const s of suggestions) {
+          console.log(`  [L${s.level}] ${s.content.substring(0, 120)}${s.content.length > 120 ? '...' : ''} (id: ${s.memoryId.substring(0, 8)})`);
+        }
+      }
+      break;
+    }
+
+    default:
+      console.error(`Unknown shared command: ${subcmd}`);
+      await omni.close();
       process.exit(1);
   }
 
