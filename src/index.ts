@@ -923,6 +923,20 @@ export class Omnimind {
   }
 }
 
+export { McpSharedClient } from './shared/McpSharedClient.js';
+export {
+  SharedError,
+  type SharedClient,
+  type SharedClientConfig,
+  type SharedErrorKind,
+  type SharedItem,
+  type SharedPublishInput,
+  type SharedSearchResult,
+  type SharedStatus,
+  type SharedSuggestion,
+  type SharedToolTransport,
+} from './shared/types.js';
+
 // ─── Convenience Exports ──────────────────────────────────────────
 
 export {
