@@ -16,6 +16,9 @@
   let isRegistering = $state(false);
   let isInstallingCli = $state(false);
   let connectMsg = $state<string | null>(null);
+  let isTestingShared = $state(false);
+  let sharedTestMsg = $state<string | null>(null);
+  let sharedTestOk = $state(false);
 
   let settings = $state<Record<string, string>>({});
   let form = $state({
@@ -25,6 +28,9 @@
     autoStart: 'false',
     defaultWing: 'general',
     autoEvictDays: '90',
+    sharedEnabled: 'false',
+    sharedServerUrl: '',
+    sharedToken: '',
   });
 
   onMount(async () => {
@@ -36,6 +42,9 @@
       form.autoStart = settings.autoStart || 'false';
       form.defaultWing = settings.defaultWing || 'general';
       form.autoEvictDays = settings.autoEvictDays || '90';
+      form.sharedEnabled = settings.sharedEnabled || 'false';
+      form.sharedServerUrl = settings.sharedServerUrl || '';
+      form.sharedToken = settings.sharedToken || '';
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load settings');
     } finally {
@@ -108,6 +117,9 @@
     form.autoStart = settings.autoStart || 'false';
     form.defaultWing = settings.defaultWing || 'general';
     form.autoEvictDays = settings.autoEvictDays || '90';
+    form.sharedEnabled = settings.sharedEnabled || 'false';
+    form.sharedServerUrl = settings.sharedServerUrl || '';
+    form.sharedToken = settings.sharedToken || '';
     saveMsg = 'Form reset to saved values';
     setTimeout(() => (saveMsg = null), 3000);
   }
@@ -174,6 +186,27 @@
     } finally {
       isEvicting = false;
       setTimeout(() => (actionMsg = null), 5000);
+    }
+  }
+
+  async function handleSharedTest() {
+    isTestingShared = true;
+    sharedTestMsg = null;
+    try {
+      // Save first: the endpoint reads persisted settings, not the form.
+      await api.setSetting('sharedEnabled', form.sharedEnabled);
+      await api.setSetting('sharedServerUrl', form.sharedServerUrl);
+      await api.setSetting('sharedToken', form.sharedToken);
+      const result = await api.sharedTest();
+      sharedTestOk = result.connected;
+      sharedTestMsg = result.connected
+        ? `Connected — ${result.items} shared items visible (${result.superseded} superseded).`
+        : `Not connected: ${result.reason ?? 'unknown'}${result.message ? ` — ${result.message}` : ''}`;
+    } catch (e) {
+      sharedTestOk = false;
+      sharedTestMsg = `Test failed: ${e instanceof Error ? e.message : String(e)}`;
+    } finally {
+      isTestingShared = false;
     }
   }
 </script>
@@ -274,6 +307,59 @@
               class="w-full bg-[var(--bg)] border border-[var(--border)] rounded-lg px-3 py-2 text-sm text-[var(--text)] focus:outline-none focus:border-[var(--accent)]"
             />
             <p class="text-xs text-[var(--text-muted)] mt-1">Archive memories unaccessed for this many days (0 = disabled).</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- Shared Memory Server -->
+      <section class="bg-[var(--surface)] rounded-xl p-6 border border-[var(--border)]">
+        <h3 class="text-sm font-medium text-[var(--text-muted)] uppercase tracking-wider mb-4">Shared Memory Server</h3>
+        <p class="text-xs text-[var(--text-muted)] mb-4">
+          Connect to your team's shared memory server to search and publish promoted (L2/L3) knowledge.
+          Your personal memory stays local.
+        </p>
+        <div class="space-y-4">
+          <div class="flex items-center justify-between">
+            <div>
+              <div class="text-sm text-[var(--text)]">Enable Shared Memory</div>
+              <div class="text-xs text-[var(--text-muted)]">Requires a server URL and token from your admin.</div>
+            </div>
+            <button
+              onclick={() => form.sharedEnabled = form.sharedEnabled === 'true' ? 'false' : 'true'}
+              class="relative w-11 h-6 rounded-full transition-colors {form.sharedEnabled === 'true' ? 'bg-[var(--accent)]' : 'bg-[var(--border)]'}"
+            >
+              <span class="absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white transition-transform {form.sharedEnabled === 'true' ? 'translate-x-5' : ''}"></span>
+            </button>
+          </div>
+          <div>
+            <label class="block text-sm text-[var(--text)] mb-1">Server URL</label>
+            <input
+              type="text"
+              bind:value={form.sharedServerUrl}
+              placeholder="https://omnimind-server.example.com/mcp"
+              class="w-full bg-[var(--bg)] border border-[var(--border)] rounded-lg px-3 py-2 text-sm text-[var(--text)] focus:outline-none focus:border-[var(--accent)]"
+            />
+          </div>
+          <div>
+            <label class="block text-sm text-[var(--text)] mb-1">Token</label>
+            <input
+              type="password"
+              bind:value={form.sharedToken}
+              placeholder="omt_..."
+              class="w-full bg-[var(--bg)] border border-[var(--border)] rounded-lg px-3 py-2 text-sm text-[var(--text)] focus:outline-none focus:border-[var(--accent)]"
+            />
+          </div>
+          <div class="flex items-center gap-3">
+            <button
+              onclick={handleSharedTest}
+              disabled={isTestingShared}
+              class="px-4 py-2 bg-[var(--surface)] border border-[var(--border)] text-sm rounded-lg hover:bg-[var(--surface-hover)] transition-colors disabled:opacity-50"
+            >
+              {isTestingShared ? 'Testing...' : 'Test Connection'}
+            </button>
+            {#if sharedTestMsg}
+              <span class="text-sm {sharedTestOk ? 'text-green-400' : 'text-yellow-400'}">{sharedTestMsg}</span>
+            {/if}
           </div>
         </div>
       </section>

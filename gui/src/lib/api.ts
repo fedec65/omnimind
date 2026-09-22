@@ -252,6 +252,11 @@ export const api = {
       body: JSON.stringify({ key, value }),
     }),
 
+  sharedTest: () =>
+    fetchJson<{ connected: boolean; reason?: string; message?: string; items?: number; superseded?: number }>(
+      '/api/shared/test',
+    ),
+
   importMemories: (json: string) =>
     fetchJson<{ imported: number }>('/api/import', {
       method: 'POST',
