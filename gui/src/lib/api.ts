@@ -252,9 +252,19 @@ export const api = {
       body: JSON.stringify({ key, value }),
     }),
 
-  sharedTest: () =>
+  // With both url and token, POSTs them as the body so the server tests those
+  // credentials ad-hoc (no save side-effect). Without them, falls back to the
+  // GET path which reads the persisted settings.
+  sharedTest: (url?: string, token?: string) =>
     fetchJson<{ connected: boolean; reason?: string; message?: string; items?: number; superseded?: number }>(
       '/api/shared/test',
+      url !== undefined && token !== undefined
+        ? {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url, token }),
+          }
+        : undefined,
     ),
 
   importMemories: (json: string) =>

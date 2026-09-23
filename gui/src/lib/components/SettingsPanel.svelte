@@ -197,13 +197,15 @@
     isTestingShared = true;
     sharedTestMsg = null;
     try {
-      // Save first: the endpoint reads persisted settings, not the form.
-      await api.setSetting('sharedEnabled', form.sharedEnabled);
-      await api.setSetting('sharedServerUrl', form.sharedServerUrl);
-      // Skip the masked placeholder so the persisted token survives (see save()).
-      if (form.sharedToken !== '***') await api.setSetting('sharedToken', form.sharedToken);
-      settings = await api.settings();
-      const result = await api.sharedTest();
+      // Test the current form values ad-hoc — the endpoint does not read (or
+      // save) persisted settings when a body is provided. When the token field
+      // still shows the '***' mask we cannot send it, so fall back to the GET
+      // path which uses the persisted token.
+      const canSendBody =
+        form.sharedToken !== '***' && form.sharedServerUrl.trim() !== '' && form.sharedToken.trim() !== '';
+      const result = canSendBody
+        ? await api.sharedTest(form.sharedServerUrl, form.sharedToken)
+        : await api.sharedTest();
       sharedTestOk = result.connected;
       sharedTestMsg = result.connected
         ? `Connected — ${result.items ?? 0} shared items visible (${result.superseded ?? 0} superseded).`

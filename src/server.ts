@@ -478,21 +478,55 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
     }
   }
 
-  // Shared server connectivity test — builds an ad-hoc client from the
-  // currently persisted settings, so the GUI can verify them without a restart.
-  if (path === '/api/shared/test' && method === 'GET') {
-    const enabled = omni!.getSetting('sharedEnabled');
-    if (enabled.ok && enabled.value !== null && enabled.value !== 'true') {
-      sendJson(res, 200, { connected: false, reason: 'disabled' });
-      return;
+  // Shared server connectivity test — builds an ad-hoc client from either the
+  // request body (POST) or the currently persisted settings (GET, or POST
+  // without a body), so the GUI can verify credentials without saving them.
+  if (path === '/api/shared/test' && (method === 'GET' || method === 'POST')) {
+    let serverUrl: string | undefined;
+    let serverToken: string | undefined;
+
+    if (method === 'POST') {
+      const body = await readBody(req);
+      const bodyUrl = typeof body.url === 'string' ? body.url : undefined;
+      const bodyToken = typeof body.token === 'string' ? body.token : undefined;
+      if (bodyUrl !== undefined || bodyToken !== undefined) {
+        if (bodyUrl === undefined || bodyToken === undefined) {
+          sendJson(res, 400, { error: 'url and token must be provided together' });
+          return;
+        }
+        let parsed: URL;
+        try {
+          parsed = new URL(bodyUrl);
+        } catch {
+          sendJson(res, 400, { error: 'url must be a valid URL' });
+          return;
+        }
+        if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+          sendJson(res, 400, { error: 'url must use http or https' });
+          return;
+        }
+        serverUrl = bodyUrl;
+        serverToken = bodyToken;
+      }
     }
-    const url = omni!.getSetting('sharedServerUrl');
-    const token = omni!.getSetting('sharedToken');
-    if ((!url.ok || !url.value) || (!token.ok || !token.value)) {
-      sendJson(res, 200, { connected: false, reason: 'not configured' });
-      return;
+
+    if (serverUrl === undefined || serverToken === undefined) {
+      const enabled = omni!.getSetting('sharedEnabled');
+      if (enabled.ok && enabled.value !== null && enabled.value !== 'true') {
+        sendJson(res, 200, { connected: false, reason: 'disabled' });
+        return;
+      }
+      const persistedUrl = omni!.getSetting('sharedServerUrl');
+      const persistedToken = omni!.getSetting('sharedToken');
+      if ((!persistedUrl.ok || !persistedUrl.value) || (!persistedToken.ok || !persistedToken.value)) {
+        sendJson(res, 200, { connected: false, reason: 'not configured' });
+        return;
+      }
+      serverUrl = persistedUrl.value;
+      serverToken = persistedToken.value;
     }
-    const client = new McpSharedClient({ serverUrl: url.value, token: token.value, timeoutMs: 5000 });
+
+    const client = new McpSharedClient({ serverUrl, token: serverToken, timeoutMs: 5000 });
     try {
       const status = await client.status();
       if (status.ok) {
