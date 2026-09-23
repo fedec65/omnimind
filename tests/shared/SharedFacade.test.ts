@@ -167,4 +167,70 @@ describe('Omnimind facade — shared server wiring', () => {
     expect(last.value).toContain('unauthorized');
     await omni.close();
   });
+
+  it('401 via searchShared disables shared functionality and records lastSharedError', async () => {
+    const fake = new FakeTransport();
+    fake.enqueueThrow(new SharedError('unauthorized', 'revoked'));
+    const omni = await Omnimind.create({ dataDir: tmpDir, adapters: false, sharedTransport: fake });
+
+    expect(omni.sharedAvailable()).toBe(true);
+    const search = await omni.searchShared('CI pipeline');
+    expect(search.ok).toBe(false);
+    expect(omni.sharedAvailable()).toBe(false);
+
+    const last = omni.getSetting('lastSharedError');
+    expect(last.ok).toBe(true);
+    expect(last.value).toContain('unauthorized');
+    await omni.close();
+  });
+
+  it('401 via statusShared disables shared functionality and records lastSharedError', async () => {
+    const fake = new FakeTransport();
+    fake.enqueueThrow(new SharedError('unauthorized', 'revoked'));
+    const omni = await Omnimind.create({ dataDir: tmpDir, adapters: false, sharedTransport: fake });
+
+    expect(omni.sharedAvailable()).toBe(true);
+    const status = await omni.statusShared();
+    expect(status.ok).toBe(false);
+    expect(omni.sharedAvailable()).toBe(false);
+
+    const last = omni.getSetting('lastSharedError');
+    expect(last.ok).toBe(true);
+    expect(last.value).toContain('unauthorized');
+    await omni.close();
+  });
+
+  it('searchShared and statusShared return an error when not configured', async () => {
+    const omni = await Omnimind.create({ dataDir: tmpDir, adapters: false });
+
+    const search = await omni.searchShared('anything');
+    expect(search.ok).toBe(false);
+    if (!search.ok) expect(search.error.message).toContain('not configured');
+
+    const status = await omni.statusShared();
+    expect(status.ok).toBe(false);
+    if (!status.ok) expect(status.error.message).toContain('not configured');
+    await omni.close();
+  });
+
+  it('malformed sharedServerUrl at create() degrades to local-only without throwing', async () => {
+    const omni = await Omnimind.create({ dataDir: tmpDir, adapters: false });
+    omni.setSetting('sharedEnabled', 'true');
+    omni.setSetting('sharedServerUrl', 'not a url');
+    omni.setSetting('sharedToken', 'omt_abc');
+    await omni.close();
+
+    let omni2: Omnimind | null = null;
+    await expect(
+      (async () => {
+        omni2 = await Omnimind.create({ dataDir: tmpDir, adapters: false });
+      })(),
+    ).resolves.toBeUndefined();
+    expect(omni2!.shared).toBeNull();
+    expect(omni2!.sharedAvailable()).toBe(false);
+
+    const search = await omni2!.searchShared('anything');
+    expect(search.ok).toBe(false);
+    await omni2!.close();
+  });
 });

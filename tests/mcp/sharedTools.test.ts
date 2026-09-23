@@ -30,12 +30,8 @@ function makeServer(overrides: Record<string, unknown> = {}): OmnimindMcpServer 
   ];
   (server as any).omni = {
     sharedAvailable: () => true,
-    shared: {
-      search: async () => ok(searchResults),
-      status: async () => ok({ items: 12, superseded: 3 }),
-      publish: async () => ok('new-uuid'),
-      close: async () => {},
-    },
+    searchShared: async () => ok(searchResults),
+    statusShared: async () => ok({ items: 12, superseded: 3 }),
     publishMemoryToShared: async () => ok('new-uuid'),
     ...overrides,
   };
@@ -59,7 +55,7 @@ describe('MCP shared tools', () => {
   });
 
   it('omnimind_shared_search reports not-configured without error', async () => {
-    server = makeServer({ sharedAvailable: () => false, shared: null });
+    server = makeServer({ sharedAvailable: () => false });
     const handler = (server as any).handleSharedSearch.bind(server);
     const result = await handler({ query: 'CI' });
 
@@ -102,7 +98,7 @@ describe('MCP shared tools', () => {
   });
 
   it('omnimind_shared_status reports not-configured', async () => {
-    server = makeServer({ sharedAvailable: () => false, shared: null });
+    server = makeServer({ sharedAvailable: () => false });
     const handler = (server as any).handleSharedStatus.bind(server);
     const result = await handler();
 

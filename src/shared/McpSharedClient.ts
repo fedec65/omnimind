@@ -160,6 +160,12 @@ export class McpSharedClient implements SharedClient {
       retryDelayMs: config.retryDelayMs ?? DEFAULT_RETRY_DELAY_MS,
     };
     this.transport = transport ?? new McpToolTransport(config.serverUrl, config.token);
+    if (this.config.serverUrl.startsWith('http://')) {
+      console.warn(
+        '[Omnimind] Shared server URL uses cleartext http:// — the bearer token and memory ' +
+        'content travel unencrypted. Prefer https://.',
+      );
+    }
   }
 
   search(queryText: string, limit?: number | undefined): Promise<Result<SharedSearchResult[], SharedError>> {

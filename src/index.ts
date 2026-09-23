@@ -74,7 +74,7 @@ import { extractRelations } from './core/RelationExtractor.js';
 import { configureNerEngine, getNerEngineInfo, initNerEngine, type NerEngineInfo } from './core/ner/NerEngine.js';
 import { type Prediction } from './prediction/IntentPredictor.js';
 import { McpSharedClient } from './shared/McpSharedClient.js';
-import type { SharedClient, SharedError, SharedSuggestion, SharedToolTransport } from './shared/types.js';
+import type { SharedClient, SharedError, SharedSearchResult, SharedStatus, SharedSuggestion, SharedToolTransport } from './shared/types.js';
 
 // ─── Configuration ────────────────────────────────────────────────
 
@@ -242,10 +242,22 @@ export class Omnimind {
         sharedUrl.ok && sharedUrl.value !== null && sharedUrl.value.length > 0 &&
         sharedToken.ok && sharedToken.value !== null && sharedToken.value.length > 0
       ) {
+        let urlValid = true;
         try {
-          shared = new McpSharedClient({ serverUrl: sharedUrl.value, token: sharedToken.value });
-        } catch (error) {
-          console.error(`[Omnimind] Shared client failed: ${error instanceof Error ? error.message : String(error)}`);
+          new URL(sharedUrl.value);
+        } catch {
+          urlValid = false;
+          console.error(
+            `[Omnimind] Malformed sharedServerUrl "${sharedUrl.value}" — shared memory disabled. ` +
+            'Fix with: omnimind shared config --url <url>',
+          );
+        }
+        if (urlValid) {
+          try {
+            shared = new McpSharedClient({ serverUrl: sharedUrl.value, token: sharedToken.value });
+          } catch (error) {
+            console.error(`[Omnimind] Shared client failed: ${error instanceof Error ? error.message : String(error)}`);
+          }
         }
       }
     }
@@ -889,6 +901,43 @@ export class Omnimind {
     }
     this.sharedSuggestions = this.sharedSuggestions.filter((s) => s.memoryId !== id);
     this.sharedCache = null;
+    return ok(result.value);
+  }
+
+  /**
+   * Search the shared team/org memory server.
+   * Errors route through handleSharedError — a 401 disables shared
+   * functionality until the token is renewed.
+   */
+  async searchShared(
+    query: string,
+    limit?: number | undefined,
+  ): Promise<Result<SharedSearchResult[], Error>> {
+    if (!this.sharedAvailable()) {
+      return err(new Error('Shared memory server not configured'));
+    }
+    const result = await this.shared!.search(query, limit);
+    if (!result.ok) {
+      this.handleSharedError(result.error);
+      return err(result.error);
+    }
+    return ok(result.value);
+  }
+
+  /**
+   * Check connectivity and statistics of the shared memory server.
+   * Errors route through handleSharedError — a 401 disables shared
+   * functionality until the token is renewed.
+   */
+  async statusShared(): Promise<Result<SharedStatus, Error>> {
+    if (!this.sharedAvailable()) {
+      return err(new Error('Shared memory server not configured'));
+    }
+    const result = await this.shared!.status();
+    if (!result.ok) {
+      this.handleSharedError(result.error);
+      return err(result.error);
+    }
     return ok(result.value);
   }
 

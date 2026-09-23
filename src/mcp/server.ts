@@ -915,11 +915,11 @@ export class OmnimindMcpServer {
 
   private async handleSharedSearch(args: unknown) {
     const input = SharedSearchInput.parse(args);
-    if (!this.omni?.sharedAvailable() || !this.omni.shared) {
+    if (!this.omni?.sharedAvailable()) {
       return this.sharedNotConfigured();
     }
 
-    const result = await this.omni.shared.search(input.query, input.limit);
+    const result = await this.omni.searchShared(input.query, input.limit);
     if (!result.ok) throw result.error;
 
     if (result.value.length === 0) {
@@ -970,11 +970,11 @@ export class OmnimindMcpServer {
   }
 
   private async handleSharedStatus() {
-    if (!this.omni?.sharedAvailable() || !this.omni.shared) {
+    if (!this.omni?.sharedAvailable()) {
       return this.sharedNotConfigured();
     }
 
-    const result = await this.omni.shared.status();
+    const result = await this.omni.statusShared();
     if (!result.ok) throw result.error;
 
     return {

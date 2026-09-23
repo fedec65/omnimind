@@ -507,7 +507,7 @@ Shared memory server commands:
           );
         }
       } else {
-        const result = await omni.shared!.status();
+        const result = await omni.statusShared();
         if (result.ok) {
           console.log(`Shared server OK — ${result.value.items} items visible (${result.value.superseded} superseded).`);
         } else {
@@ -529,7 +529,7 @@ Shared memory server commands:
         break;
       }
       const limit = parseInt(parseFlag(args, '--limit') ?? '10', 10);
-      const result = await omni.shared!.search(query, limit);
+      const result = await omni.searchShared(query, limit);
       if (!result.ok) {
         console.error(`Error: ${result.error.message}`);
         break;
