@@ -26,7 +26,7 @@ describe('HTTP Server', () => {
       const timer = setTimeout(() => reject(new Error('Server startup timeout')), 15000);
       server.stdout?.on('data', (data: Buffer) => {
         const text = data.toString();
-        const match = text.match(/Listening on http:\/\/localhost:(\d+)/);
+        const match = text.match(/Listening on http:\/\/(?:localhost|127\.0\.0\.1):(\d+)/);
         if (match) {
           clearTimeout(timer);
           resolve(parseInt(match[1], 10));

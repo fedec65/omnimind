@@ -33,7 +33,7 @@ describe('Server startup phases', () => {
     port = await new Promise((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error('Server startup timeout')), 15000);
       server.stdout?.on('data', (data: Buffer) => {
-        const match = data.toString().match(/Listening on http:\/\/localhost:(\d+)/);
+        const match = data.toString().match(/Listening on http:\/\/(?:localhost|127\.0\.0\.1):(\d+)/);
         if (match) {
           clearTimeout(timer);
           resolve(parseInt(match[1], 10));

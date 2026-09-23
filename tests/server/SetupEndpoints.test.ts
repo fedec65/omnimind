@@ -39,7 +39,7 @@ describe('Setup endpoints', () => {
     port = await new Promise((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error('Server startup timeout')), 15000);
       server.stdout?.on('data', (data: Buffer) => {
-        const match = data.toString().match(/Listening on http:\/\/localhost:(\d+)/);
+        const match = data.toString().match(/Listening on http:\/\/(?:localhost|127\.0\.0\.1):(\d+)/);
         if (match) {
           clearTimeout(timer);
           resolve(parseInt(match[1], 10));
@@ -122,5 +122,14 @@ describe('Setup endpoints', () => {
     // And now the status endpoint reports it as installed
     const status = await get('/api/setup/clients');
     expect(status.cli.installed).toBe(join(home, 'bin', 'omnimind'));
+  });
+
+  it('GET /api/settings masks sharedToken instead of echoing the secret', async () => {
+    const secret = 'omn_test_secret_token_value';
+    await post('/api/settings', { key: 'sharedToken', value: secret });
+
+    const res = await get('/api/settings');
+    expect(res.sharedToken).toBe('***');
+    expect(JSON.stringify(res)).not.toContain(secret);
   });
 });
