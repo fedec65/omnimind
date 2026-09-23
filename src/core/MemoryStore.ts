@@ -33,6 +33,7 @@ import {
 import { EmbeddingEngine } from './EmbeddingEngine.js';
 import { SearchEngine } from './SearchEngine.js';
 import { CryptoEngine } from './CryptoEngine.js';
+import type { SharedSuggestion } from '../shared/types.js';
 
 /** Database initialization SQL */
 const INIT_SQL = `
@@ -171,6 +172,15 @@ CREATE TABLE IF NOT EXISTS wisdom_patterns (
 );
 CREATE INDEX IF NOT EXISTS idx_wisdom_predicate ON wisdom_patterns(predicate);
 CREATE INDEX IF NOT EXISTS idx_wisdom_frequency ON wisdom_patterns(frequency DESC);
+
+-- Publish suggestions for the shared memory server (persisted so a
+-- restart or a CLI invocation can see them; pruned lazily on a 24h TTL)
+CREATE TABLE IF NOT EXISTS shared_suggestions (
+  memory_id     TEXT PRIMARY KEY,
+  content       TEXT NOT NULL,
+  level         INTEGER NOT NULL,
+  suggested_at  INTEGER NOT NULL
+);
 `;
 
 /** FTS5 virtual table for keyword search */
@@ -1681,6 +1691,70 @@ export class MemoryStore {
       const settings: Record<string, string> = {};
       for (const row of rows) settings[row.key] = row.value;
       return ok(settings);
+    } catch (error) {
+      return err(error instanceof Error ? error : new Error(String(error)));
+    }
+  }
+
+  // ─── Shared Suggestions ───────────────────────────────────────────
+
+  /** Persist (upsert) a shared publish suggestion. */
+  saveSharedSuggestion(suggestion: SharedSuggestion): Result<void> {
+    if (!this.initialized) return err(new Error('Store not initialized'));
+    try {
+      this.db!.prepare(
+        `INSERT INTO shared_suggestions (memory_id, content, level, suggested_at)
+         VALUES (?, ?, ?, ?)
+         ON CONFLICT(memory_id) DO UPDATE SET
+           content = excluded.content,
+           level = excluded.level,
+           suggested_at = excluded.suggested_at`,
+      ).run(suggestion.memoryId, suggestion.content, suggestion.level, suggestion.suggestedAt);
+      return ok(undefined);
+    } catch (error) {
+      return err(error instanceof Error ? error : new Error(String(error)));
+    }
+  }
+
+  /** Load all persisted shared publish suggestions, newest first. */
+  loadSharedSuggestions(): Result<SharedSuggestion[]> {
+    if (!this.initialized) return err(new Error('Store not initialized'));
+    try {
+      const rows = this.db!.prepare(
+        'SELECT memory_id, content, level, suggested_at FROM shared_suggestions ORDER BY suggested_at DESC',
+      ).all() as Array<{ memory_id: string; content: string; level: number; suggested_at: number }>;
+      return ok(
+        rows.map((row) => ({
+          memoryId: row.memory_id,
+          content: row.content,
+          level: row.level,
+          suggestedAt: row.suggested_at,
+        })),
+      );
+    } catch (error) {
+      return err(error instanceof Error ? error : new Error(String(error)));
+    }
+  }
+
+  /** Remove a shared publish suggestion after a successful publish. */
+  deleteSharedSuggestion(memoryId: string): Result<void> {
+    if (!this.initialized) return err(new Error('Store not initialized'));
+    try {
+      this.db!.prepare('DELETE FROM shared_suggestions WHERE memory_id = ?').run(memoryId);
+      return ok(undefined);
+    } catch (error) {
+      return err(error instanceof Error ? error : new Error(String(error)));
+    }
+  }
+
+  /** Drop suggestions older than the cutoff timestamp; returns the deleted count. */
+  pruneSharedSuggestions(olderThanMs: number): Result<number> {
+    if (!this.initialized) return err(new Error('Store not initialized'));
+    try {
+      const result = this.db!
+        .prepare('DELETE FROM shared_suggestions WHERE suggested_at < ?')
+        .run(olderThanMs);
+      return ok(result.changes);
     } catch (error) {
       return err(error instanceof Error ? error : new Error(String(error)));
     }

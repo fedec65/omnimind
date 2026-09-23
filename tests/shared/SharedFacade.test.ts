@@ -233,4 +233,62 @@ describe('Omnimind facade — shared server wiring', () => {
     expect(search.ok).toBe(false);
     await omni2!.close();
   });
+
+  it('persists suggestions and deletes the row on successful publish', async () => {
+    const fake = new FakeTransport();
+    fake.enqueueText('{"id":"published-1"}');
+    const omni = await Omnimind.create({ dataDir: tmpDir, adapters: false, sharedTransport: fake });
+
+    const stored = await omni.store('Promoted concept', { wing: 'eng' });
+    expect(stored.ok).toBe(true);
+    if (!stored.ok) return;
+    const updated = await omni.memoryStore.update(stored.value.id, { layer: 2 });
+    expect(updated.ok).toBe(true);
+    if (!updated.ok) return;
+
+    (omni as any).noteSharedSuggestion(updated.value);
+    const persisted = omni.memoryStore.loadSharedSuggestions();
+    expect(persisted.ok).toBe(true);
+    if (!persisted.ok) return;
+    expect(persisted.value.map((s) => s.memoryId)).toEqual([stored.value.id]);
+
+    const pub = await omni.publishMemoryToShared(stored.value.id, { visibility: 'org' });
+    expect(pub.ok).toBe(true);
+
+    expect(omni.getSharedSuggestions()).toEqual([]);
+    const after = omni.memoryStore.loadSharedSuggestions();
+    expect(after.ok).toBe(true);
+    if (!after.ok) return;
+    expect(after.value).toEqual([]);
+    await omni.close();
+  });
+
+  it('boot reloads persisted suggestions and prunes stale ones', async () => {
+    const fake = new FakeTransport();
+    const omni = await Omnimind.create({ dataDir: tmpDir, adapters: false, sharedTransport: fake });
+
+    const stored = await omni.store('Promoted concept', { wing: 'eng' });
+    expect(stored.ok).toBe(true);
+    if (!stored.ok) return;
+    const updated = await omni.memoryStore.update(stored.value.id, { layer: 2 });
+    expect(updated.ok).toBe(true);
+    if (!updated.ok) return;
+    (omni as any).noteSharedSuggestion(updated.value);
+
+    // A stale suggestion (25h old) inserted directly into the store
+    omni.memoryStore.saveSharedSuggestion({
+      memoryId: 'stale-one',
+      content: 'Old suggestion',
+      level: 2,
+      suggestedAt: Date.now() - 25 * 60 * 60 * 1000,
+    });
+    await omni.close();
+
+    // Reboot against the same data dir: fresh suggestion survives, stale one is pruned
+    const omni2 = await Omnimind.create({ dataDir: tmpDir, adapters: false, sharedTransport: new FakeTransport() });
+    const suggestions = omni2.getSharedSuggestions();
+    expect(suggestions.map((s) => s.memoryId)).toEqual([stored.value.id]);
+    expect(suggestions[0]!.content).toBe('Promoted concept');
+    await omni2.close();
+  });
 });

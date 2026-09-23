@@ -283,4 +283,69 @@ describe('MemoryStore', () => {
       expect(result.value).toEqual([]);
     });
   });
+
+  describe('shared suggestions persistence', () => {
+    it('roundtrips save/load', () => {
+      const saved = store.saveSharedSuggestion({
+        memoryId: 'm1',
+        content: 'Concept about testing',
+        level: 2,
+        suggestedAt: 12345,
+      });
+      expect(saved.ok).toBe(true);
+      store.saveSharedSuggestion({
+        memoryId: 'm2',
+        content: 'Wisdom about deploys',
+        level: 3,
+        suggestedAt: 67890,
+      });
+
+      const loaded = store.loadSharedSuggestions();
+      expect(loaded.ok).toBe(true);
+      if (!loaded.ok) return;
+      expect(loaded.value).toEqual([
+        { memoryId: 'm2', content: 'Wisdom about deploys', level: 3, suggestedAt: 67890 },
+        { memoryId: 'm1', content: 'Concept about testing', level: 2, suggestedAt: 12345 },
+      ]);
+    });
+
+    it('upserts on the same memory_id', () => {
+      store.saveSharedSuggestion({ memoryId: 'm1', content: 'old', level: 2, suggestedAt: 1 });
+      store.saveSharedSuggestion({ memoryId: 'm1', content: 'new', level: 3, suggestedAt: 2 });
+
+      const loaded = store.loadSharedSuggestions();
+      expect(loaded.ok).toBe(true);
+      if (!loaded.ok) return;
+      expect(loaded.value).toEqual([
+        { memoryId: 'm1', content: 'new', level: 3, suggestedAt: 2 },
+      ]);
+    });
+
+    it('prune removes suggestions older than the cutoff', () => {
+      const now = Date.now();
+      store.saveSharedSuggestion({ memoryId: 'fresh', content: 'a', level: 2, suggestedAt: now });
+      store.saveSharedSuggestion({ memoryId: 'stale', content: 'b', level: 2, suggestedAt: now - 25 * 60 * 60 * 1000 });
+
+      const pruned = store.pruneSharedSuggestions(now - 24 * 60 * 60 * 1000);
+      expect(pruned.ok).toBe(true);
+      if (!pruned.ok) return;
+      expect(pruned.value).toBe(1);
+
+      const loaded = store.loadSharedSuggestions();
+      expect(loaded.ok).toBe(true);
+      if (!loaded.ok) return;
+      expect(loaded.value.map((s) => s.memoryId)).toEqual(['fresh']);
+    });
+
+    it('deleteSharedSuggestion removes the row', () => {
+      store.saveSharedSuggestion({ memoryId: 'm1', content: 'a', level: 2, suggestedAt: 1 });
+      const deleted = store.deleteSharedSuggestion('m1');
+      expect(deleted.ok).toBe(true);
+
+      const loaded = store.loadSharedSuggestions();
+      expect(loaded.ok).toBe(true);
+      if (!loaded.ok) return;
+      expect(loaded.value).toEqual([]);
+    });
+  });
 });

@@ -265,6 +265,23 @@ export class Omnimind {
     const omni = new Omnimind(store, bus, predictor, patternStore, activityTracker, contextInjector, shared);
     console.log(`[Omnimind] Initialized at ${dbPath}`);
 
+    // Reload persisted shared publish suggestions (survives restarts; the
+    // CLI reads the same store instead of an empty process-local list).
+    // Best-effort: a persistence failure degrades to in-memory only.
+    const suggestionsLoaded = store.loadSharedSuggestions();
+    if (!suggestionsLoaded.ok) {
+      console.warn(`[Omnimind] Failed to load shared suggestions: ${suggestionsLoaded.error.message}`);
+    } else {
+      const suggestionsCutoff = Date.now() - TimeConstants.DAY;
+      const pruned = store.pruneSharedSuggestions(suggestionsCutoff);
+      if (!pruned.ok) {
+        console.warn(`[Omnimind] Failed to prune shared suggestions: ${pruned.error.message}`);
+      }
+      omni.sharedSuggestions = suggestionsLoaded.value
+        .filter((s) => s.suggestedAt >= suggestionsCutoff)
+        .slice(0, 20);
+    }
+
     // Auto-evict stale memories on startup (configurable via setting)
     const autoEvictSetting = omni.getSetting('autoEvictDays');
     const days = autoEvictSetting.ok && autoEvictSetting.value !== null
@@ -900,6 +917,10 @@ export class Omnimind {
       return err(result.error);
     }
     this.sharedSuggestions = this.sharedSuggestions.filter((s) => s.memoryId !== id);
+    const deleted = this.memoryStore.deleteSharedSuggestion(id);
+    if (!deleted.ok) {
+      console.warn(`[Omnimind] Failed to delete shared suggestion: ${deleted.error.message}`);
+    }
     this.sharedCache = null;
     return ok(result.value);
   }
@@ -945,13 +966,18 @@ export class Omnimind {
   private noteSharedSuggestion(memory: Memory): void {
     if (this.shared === null) return;
     this.sharedSuggestions = this.sharedSuggestions.filter((s) => s.memoryId !== memory.id);
-    this.sharedSuggestions.unshift({
+    const suggestion: SharedSuggestion = {
       memoryId: memory.id,
       content: memory.content,
       level: memory.layer,
       suggestedAt: Date.now(),
-    });
+    };
+    this.sharedSuggestions.unshift(suggestion);
     if (this.sharedSuggestions.length > 20) this.sharedSuggestions.length = 20;
+    const persisted = this.memoryStore.saveSharedSuggestion(suggestion);
+    if (!persisted.ok) {
+      console.warn(`[Omnimind] Failed to persist shared suggestion: ${persisted.error.message}`);
+    }
     this.sharedCache = null;
   }
 
