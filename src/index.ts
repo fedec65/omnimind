@@ -758,7 +758,13 @@ export class Omnimind {
   private async buildSharedContextBlock(fingerprint: ContextFingerprint): Promise<string> {
     if (!this.sharedAvailable()) return '';
 
-    const key = `${fingerprint.projectHash}:${fingerprint.branchHash}:${fingerprint.fileExtension}`;
+    const key = [
+      fingerprint.projectHash,
+      fingerprint.branchHash,
+      fingerprint.fileExtension,
+      ...fingerprint.recentWings,
+      ...fingerprint.recentRooms,
+    ].join(':');
     if (this.sharedCache && this.sharedCache.key === key && Date.now() - this.sharedCache.at < 60_000) {
       return this.sharedCache.text;
     }
@@ -897,6 +903,7 @@ export class Omnimind {
       suggestedAt: Date.now(),
     });
     if (this.sharedSuggestions.length > 20) this.sharedSuggestions.length = 20;
+    this.sharedCache = null;
   }
 
   /** 401 → disable shared functionality until the user renews the token. */
@@ -920,6 +927,11 @@ export class Omnimind {
     this.activityTracker.stop();
     await this.bus.close();
     this.patternStore.close();
+    try {
+      await this.shared?.close();
+    } catch {
+      // Best-effort: the shared client must not block local shutdown.
+    }
     this.memoryStore.close();
   }
 }
