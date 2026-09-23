@@ -44,6 +44,8 @@
       form.autoEvictDays = settings.autoEvictDays || '90';
       form.sharedEnabled = settings.sharedEnabled || 'false';
       form.sharedServerUrl = settings.sharedServerUrl || '';
+      // GET /api/settings masks the token as '***' (write-only secret); the
+      // field shows the mask until the user types a new token.
       form.sharedToken = settings.sharedToken || '';
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load settings');
@@ -98,6 +100,8 @@
     saveMsg = null;
     try {
       for (const [key, value] of Object.entries(form)) {
+        // The loaded token is the '***' mask — never persist it over the real secret.
+        if (key === 'sharedToken' && value === '***') continue;
         await api.setSetting(key, value);
       }
       settings = await api.settings();
@@ -196,7 +200,8 @@
       // Save first: the endpoint reads persisted settings, not the form.
       await api.setSetting('sharedEnabled', form.sharedEnabled);
       await api.setSetting('sharedServerUrl', form.sharedServerUrl);
-      await api.setSetting('sharedToken', form.sharedToken);
+      // Skip the masked placeholder so the persisted token survives (see save()).
+      if (form.sharedToken !== '***') await api.setSetting('sharedToken', form.sharedToken);
       settings = await api.settings();
       const result = await api.sharedTest();
       sharedTestOk = result.connected;

@@ -71,6 +71,10 @@ const MIME_TYPES: Record<string, string> = {
 };
 
 const PORT = process.env.OMNIMIND_PORT ? parseInt(process.env.OMNIMIND_PORT, 10) : 8844;
+// Bind address: localhost-only by default so the API (and any configured
+// shared-server token) is never exposed on the LAN. Set OMNIMIND_HOST=0.0.0.0
+// to accept external connections.
+const HOST = process.env.OMNIMIND_HOST ?? '127.0.0.1';
 const DATA_DIR = process.env.OMNIMIND_DATA_DIR;
 
 let omni: Omnimind | null = null;
@@ -102,11 +106,11 @@ async function main(): Promise<void> {
   // Listen immediately: /api/health reports the initialization phase while
   // the engine loads, so the GUI can show meaningful progress instead of a
   // dead "waiting for server" screen.
-  server.listen(PORT, () => {
+  server.listen(PORT, HOST, () => {
     const addr = server.address();
     if (addr && typeof addr === 'object') {
       serverPort = addr.port;
-      console.log(`[Omnimind Server] Listening on http://localhost:${serverPort}`);
+      console.log(`[Omnimind Server] Listening on http://${HOST}:${serverPort}`);
       // Signal parent process (Tauri) that we're ready
       if (process.send) {
         process.send({ type: 'ready', port: serverPort });
@@ -447,7 +451,13 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
         sendJson(res, 500, { error: result.error.message });
         return;
       }
-      sendJson(res, 200, result.value);
+      // sharedToken is write-only: never echo the real value back. The GUI
+      // shows '***' in the token field after a reload, which is intended —
+      // re-saving '***' would persist the mask, so the panel skips the POST
+      // when the value is unchanged/masked.
+      const settings = { ...result.value };
+      if (settings.sharedToken) settings.sharedToken = '***';
+      sendJson(res, 200, settings);
       return;
     }
     if (method === 'POST') {
