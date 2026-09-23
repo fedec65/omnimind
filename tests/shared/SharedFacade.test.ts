@@ -289,6 +289,12 @@ describe('Omnimind facade — shared server wiring', () => {
     const suggestions = omni2.getSharedSuggestions();
     expect(suggestions.map((s) => s.memoryId)).toEqual([stored.value.id]);
     expect(suggestions[0]!.content).toBe('Promoted concept');
+
+    // The stale row must be gone from the DB itself, not just TTL-filtered
+    const rows = omni2.memoryStore.loadSharedSuggestions();
+    expect(rows.ok).toBe(true);
+    if (!rows.ok) return;
+    expect(rows.value.map((s) => s.memoryId)).toEqual([stored.value.id]);
     await omni2.close();
   });
 });

@@ -323,10 +323,12 @@ describe('MemoryStore', () => {
 
     it('prune removes suggestions older than the cutoff', () => {
       const now = Date.now();
+      const cutoff = now - 24 * 60 * 60 * 1000;
       store.saveSharedSuggestion({ memoryId: 'fresh', content: 'a', level: 2, suggestedAt: now });
-      store.saveSharedSuggestion({ memoryId: 'stale', content: 'b', level: 2, suggestedAt: now - 25 * 60 * 60 * 1000 });
+      store.saveSharedSuggestion({ memoryId: 'boundary', content: 'c', level: 2, suggestedAt: cutoff });
+      store.saveSharedSuggestion({ memoryId: 'stale', content: 'b', level: 2, suggestedAt: cutoff - 1 });
 
-      const pruned = store.pruneSharedSuggestions(now - 24 * 60 * 60 * 1000);
+      const pruned = store.pruneSharedSuggestions(cutoff);
       expect(pruned.ok).toBe(true);
       if (!pruned.ok) return;
       expect(pruned.value).toBe(1);
@@ -334,7 +336,7 @@ describe('MemoryStore', () => {
       const loaded = store.loadSharedSuggestions();
       expect(loaded.ok).toBe(true);
       if (!loaded.ok) return;
-      expect(loaded.value.map((s) => s.memoryId)).toEqual(['fresh']);
+      expect(loaded.value.map((s) => s.memoryId)).toEqual(['fresh', 'boundary']);
     });
 
     it('deleteSharedSuggestion removes the row', () => {
