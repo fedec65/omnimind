@@ -4,7 +4,7 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import { McpSharedClient } from '../../src/shared/McpSharedClient.js';
+import { McpSharedClient, McpToolTransport } from '../../src/shared/McpSharedClient.js';
 import {
   SharedError,
   type SharedToolTransport,
@@ -317,5 +317,134 @@ describe('McpSharedClient', () => {
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.error.kind).toBe('network');
+  });
+
+  it('publish does NOT retry on network failure (ambiguous, no idempotency key)', async () => {
+    transport.enqueueThrow(new SharedError('network', 'socket hangup'));
+
+    const result = await client.publish({ level: 2, visibility: 'org', content: 'concept' });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.kind).toBe('network');
+    expect(transport.calls.length).toBe(1);
+    expect(transport.resets).toBe(0);
+  });
+
+  it('publish does NOT retry on server (5xx) failures', async () => {
+    transport.enqueueThrow(new SharedError('server', '500'));
+
+    const result = await client.publish({ level: 2, visibility: 'org', content: 'concept' });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.kind).toBe('server');
+    expect(transport.calls.length).toBe(1);
+    expect(transport.resets).toBe(0);
+  });
+
+  it('publish does NOT retry on isError tool results', async () => {
+    transport.enqueueToolError('internal boom');
+
+    const result = await client.publish({ level: 2, visibility: 'org', content: 'concept' });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.kind).toBe('server');
+    expect(transport.calls.length).toBe(1);
+    expect(transport.resets).toBe(0);
+  });
+
+  it('publish does NOT retry on per-call timeout', async () => {
+    let calls = 0;
+    const slow: SharedToolTransport = {
+      async callTool() {
+        calls++;
+        await new Promise((r) => setTimeout(r, 200));
+        return { content: [{ type: 'text', text: '{"id":"late"}' }] };
+      },
+      async reset() {},
+      async close() {},
+    };
+    const impatient = new McpSharedClient({ ...CONFIG, timeoutMs: 20, retryDelayMs: 1 }, slow);
+
+    const result = await impatient.publish({ level: 2, visibility: 'org', content: 'concept' });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.kind).toBe('network');
+    expect(calls).toBe(1);
+  });
+
+  it('publish retries on 429 (rate_limited) then succeeds', async () => {
+    transport.enqueueThrow(new SharedError('rate_limited', '429'));
+    transport.enqueueText(JSON.stringify({ id: 'uuid-after-429' }));
+
+    const result = await client.publish({ level: 2, visibility: 'org', content: 'concept' });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value).toBe('uuid-after-429');
+    expect(transport.calls.length).toBe(2);
+    expect(transport.resets).toBe(1);
+  });
+});
+
+describe('McpToolTransport — single in-flight connection', () => {
+  function makeConnector(delayMs = 30): {
+    state: { connects: number; closes: number };
+    connector: () => Promise<{
+      callTool: (name: string, args: Record<string, unknown>) => Promise<unknown>;
+      close: () => Promise<void>;
+    }>;
+  } {
+    const state: { connects: number; closes: number } = { connects: 0, closes: 0 };
+    const connector = async () => {
+      state.connects++;
+      await new Promise((r) => setTimeout(r, delayMs));
+      return {
+        callTool: async () => ({ content: [{ type: 'text', text: searchPayload() }] }),
+        close: async () => {
+          state.closes++;
+        },
+      };
+    };
+    return { state, connector };
+  }
+
+  it('two concurrent searches trigger exactly one connect()', async () => {
+    const { state, connector } = makeConnector(30);
+    const transport = new McpToolTransport('https://example.invalid/mcp', 'tok', connector);
+    const client = new McpSharedClient(CONFIG, transport);
+
+    const [r1, r2] = await Promise.all([client.search('first'), client.search('second')]);
+
+    expect(r1.ok).toBe(true);
+    expect(r2.ok).toBe(true);
+    expect(state.connects).toBe(1);
+    await client.close();
+  });
+
+  it('reset() during a slow connect drops the late connection instead of adopting it', async () => {
+    const { state, connector } = makeConnector(40);
+    const transport = new McpToolTransport('https://example.invalid/mcp', 'tok', connector);
+    const client = new McpSharedClient(CONFIG, transport);
+
+    const pending = client.search('first');
+    await new Promise((r) => setTimeout(r, 5));
+    await transport.reset();
+    const first = await pending;
+
+    // The first attempt fails (reset superseded its connect); the read path
+    // retries and establishes a fresh connection — the late one is closed,
+    // never adopted.
+    expect(first.ok).toBe(true);
+    expect(state.connects).toBe(2);
+    expect(state.closes).toBe(1);
+
+    const second = await client.search('second');
+    expect(second.ok).toBe(true);
+    expect(state.connects).toBe(2); // reuses the fresh connection
+    await client.close();
   });
 });

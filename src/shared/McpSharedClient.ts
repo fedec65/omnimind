@@ -7,6 +7,8 @@
  *
  * Resilienza (requisiti PRD):
  * - retry solo su 429/5xx/network transitori, backoff esponenziale, max 2
+ *   (letture: search/status); publish NON ritenta su failure ambigui
+ *   (network/timeout/5xx) perché il server non ha idempotency key — solo 429
  * - MAI retry su 401
  * - timeout per chiamata (default 4s)
  * - il chiamante (facade) tratta ogni errore come fallback solo-locale
@@ -21,6 +23,7 @@ import {
   SharedError,
   type SharedClient,
   type SharedClientConfig,
+  type SharedErrorKind,
   type SharedPublishInput,
   type SharedSearchResult,
   type SharedStatus,
@@ -31,48 +34,93 @@ const DEFAULT_TIMEOUT_MS = 4000;
 const DEFAULT_MAX_RETRIES = 2;
 const DEFAULT_RETRY_DELAY_MS = 500;
 
+/** Policy di retry per letture (search/status): 429/5xx/network transitori. */
+const READ_RETRYABLE = (kind: SharedErrorKind): boolean =>
+  kind === 'rate_limited' || kind === 'server' || kind === 'network';
+
+/** Policy di retry per publish: solo 429 (la richiesta è stata rifiutata). */
+const ONLY_RATE_LIMITED_RETRYABLE = (kind: SharedErrorKind): boolean => kind === 'rate_limited';
+
 const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
-/** Transport reale: MCP StreamableHTTP stateless verso il server condiviso. */
-class McpToolTransport implements SharedToolTransport {
-  private readonly url: string;
-  private readonly token: string;
-  private client: Client | null = null;
-  private transport: StreamableHTTPClientTransport | null = null;
+/**
+ * Una connessione stabilita verso il server condiviso: callTool + close.
+ * Il connettore di default incapsula StreamableHTTP + Client MCP; i test
+ * ne iniettano uno falso per controllare connect/close.
+ */
+interface SharedConnection {
+  callTool(name: string, args: Record<string, unknown>): Promise<unknown>;
+  close(): Promise<void>;
+}
 
-  constructor(url: string, token: string) {
-    this.url = url;
-    this.token = token;
-  }
+type SharedConnector = () => Promise<SharedConnection>;
 
-  private async ensureConnected(): Promise<Client> {
-    if (this.client) return this.client;
-    const transport = new StreamableHTTPClientTransport(new URL(this.url), {
+function defaultConnector(url: string, token: string): SharedConnector {
+  return async () => {
+    const transport = new StreamableHTTPClientTransport(new URL(url), {
       requestInit: {
-        headers: { Authorization: `Bearer ${this.token}` },
+        headers: { Authorization: `Bearer ${token}` },
       },
     });
     // protocolVersion 2025-03-26 comes from the SDK's default negotiation
     // range; the remote server pins it during initialize.
     const client = new Client({ name: 'omnimind-shared-client', version: '0.1.0' });
     await client.connect(transport as Transport);
-    this.transport = transport;
-    this.client = client;
-    return client;
+    return {
+      callTool: (name, args) => client.callTool({ name, arguments: args }),
+      close: () => client.close(),
+    };
+  };
+}
+
+/** Transport reale: MCP StreamableHTTP stateless verso il server condiviso. */
+export class McpToolTransport implements SharedToolTransport {
+  private readonly connector: SharedConnector;
+  private connection: SharedConnection | null = null;
+  private connecting: Promise<SharedConnection> | null = null;
+
+  constructor(url: string, token: string, connector?: SharedConnector) {
+    this.connector = connector ?? defaultConnector(url, token);
+  }
+
+  private ensureConnected(): Promise<SharedConnection> {
+    if (this.connection) return Promise.resolve(this.connection);
+    if (!this.connecting) {
+      const attempt = this.connect(() => this.connecting === attempt);
+      this.connecting = attempt;
+      void attempt
+        .finally(() => {
+          if (this.connecting === attempt) this.connecting = null;
+        })
+        .catch(() => {});
+    }
+    return this.connecting;
+  }
+
+  private async connect(isCurrent: () => boolean): Promise<SharedConnection> {
+    const connection = await this.connector();
+    if (!isCurrent()) {
+      // reset() (o un tentativo più recente) ha superato questa connessione
+      // mentre era in corso: chiudila invece di far risorgere ref stale.
+      await connection.close().catch(() => {});
+      throw new SharedError('network', 'connection reset while connecting');
+    }
+    this.connection = connection;
+    return connection;
   }
 
   async callTool(name: string, args: Record<string, unknown>): Promise<unknown> {
-    const client = await this.ensureConnected();
-    return client.callTool({ name, arguments: args });
+    const connection = await this.ensureConnected();
+    return connection.callTool(name, args);
   }
 
   async reset(): Promise<void> {
-    const client = this.client;
-    const transport = this.transport;
-    this.client = null;
-    this.transport = null;
-    if (client) await client.close().catch(() => {});
-    else if (transport) await transport.close().catch(() => {});
+    const connection = this.connection;
+    this.connection = null;
+    // Rende isCurrent() falso per ogni connect in-flight: un completamento
+    // tardivo non deve resuscitare refs dopo il reset.
+    this.connecting = null;
+    if (connection) await connection.close().catch(() => {});
   }
 
   async close(): Promise<void> {
@@ -129,6 +177,9 @@ export class McpSharedClient implements SharedClient {
     if (input.trustWeight !== undefined) args.trust_weight = input.trustWeight;
     if (input.workspaceId !== undefined) args.workspace_id = input.workspaceId;
     if (input.metadata !== undefined) args.metadata = input.metadata;
+    // Publish non è idempotente lato server: un retry su failure ambigua
+    // (network/timeout/5xx) rischierebbe un duplicato. Retry solo su 429,
+    // dove la richiesta è arrivata ed è stata rifiutata.
     return this.callWithRetry('shared_publish', args, (text) => {
       try {
         const parsed = JSON.parse(text) as { id?: unknown };
@@ -139,7 +190,7 @@ export class McpSharedClient implements SharedClient {
       } catch {
         return err(new SharedError('malformed', 'invalid JSON in shared_publish result'));
       }
-    });
+    }, ONLY_RATE_LIMITED_RETRYABLE);
   }
 
   status(): Promise<Result<SharedStatus, SharedError>> {
@@ -186,6 +237,7 @@ export class McpSharedClient implements SharedClient {
     name: string,
     args: Record<string, unknown>,
     parse: (text: string) => Result<T, SharedError>,
+    retryable: (kind: SharedErrorKind) => boolean = READ_RETRYABLE,
   ): Promise<Result<T, SharedError>> {
     let attempt = 0;
     for (;;) {
@@ -193,8 +245,8 @@ export class McpSharedClient implements SharedClient {
         const raw = await this.withTimeout(this.transport.callTool(name, args));
         const textResult = extractText(raw);
         if (!textResult.ok) {
-          // isError tool results are retryable server failures
-          if (textResult.error.kind === 'server' && attempt < this.config.maxRetries) {
+          // isError tool results are retryable server failures (per policy)
+          if (retryable(textResult.error.kind) && attempt < this.config.maxRetries) {
             attempt++;
             await delay(this.config.retryDelayMs * 2 ** (attempt - 1));
             await this.transport.reset().catch(() => {});
@@ -205,9 +257,7 @@ export class McpSharedClient implements SharedClient {
         return parse(textResult.value);
       } catch (error) {
         const sharedError = classifyError(error);
-        const retryable =
-          sharedError.kind === 'rate_limited' || sharedError.kind === 'server' || sharedError.kind === 'network';
-        if (retryable && attempt < this.config.maxRetries) {
+        if (retryable(sharedError.kind) && attempt < this.config.maxRetries) {
           attempt++;
           await delay(this.config.retryDelayMs * 2 ** (attempt - 1));
           await this.transport.reset().catch(() => {});
