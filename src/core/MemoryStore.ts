@@ -680,6 +680,10 @@ export class MemoryStore {
 
     try {
       this.stmtDelete.run(id);
+      // Cascade to the shared publish suggestion (separate table keyed by
+      // memory id) so a deleted memory cannot resurface as an orphan
+      // suggestion after a restart.
+      this.db!.prepare('DELETE FROM shared_suggestions WHERE memory_id = ?').run(id);
       return ok(undefined);
     } catch (error) {
       return err(error instanceof Error ? error : new Error(String(error)));

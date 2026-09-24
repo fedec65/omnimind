@@ -349,5 +349,25 @@ describe('MemoryStore', () => {
       if (!loaded.ok) return;
       expect(loaded.value).toEqual([]);
     });
+
+    it('deleting the memory removes its suggestion row', async () => {
+      const stored = await store.store('Promoted memory', { wing: 'eng' });
+      expect(stored.ok).toBe(true);
+      if (!stored.ok) return;
+      store.saveSharedSuggestion({
+        memoryId: stored.value.id,
+        content: 'Promoted memory',
+        level: 2,
+        suggestedAt: Date.now(),
+      });
+
+      const deleted = await store.delete(stored.value.id);
+      expect(deleted.ok).toBe(true);
+
+      const loaded = store.loadSharedSuggestions();
+      expect(loaded.ok).toBe(true);
+      if (!loaded.ok) return;
+      expect(loaded.value).toEqual([]);
+    });
   });
 });

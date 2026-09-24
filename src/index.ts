@@ -284,9 +284,23 @@ export class Omnimind {
       if (!pruned.ok) {
         console.warn(`[Omnimind] Failed to prune shared suggestions: ${pruned.error.message}`);
       }
-      omni.sharedSuggestions = suggestionsLoaded.value
-        .filter((s) => s.suggestedAt >= suggestionsCutoff)
-        .slice(0, 20);
+      // Keep only suggestions whose memory still exists — a deleted memory
+      // must not resurface as an orphan suggestion, and publish refuses
+      // missing ids anyway. Orphan rows are removed from the DB.
+      const reconciled: SharedSuggestion[] = [];
+      for (const s of suggestionsLoaded.value) {
+        if (s.suggestedAt < suggestionsCutoff) continue;
+        const memory = await store.get(s.memoryId);
+        if (!memory.ok || memory.value === null) {
+          const dropped = store.deleteSharedSuggestion(s.memoryId);
+          if (!dropped.ok) {
+            console.warn(`[Omnimind] Failed to drop orphan shared suggestion: ${dropped.error.message}`);
+          }
+          continue;
+        }
+        reconciled.push(s);
+      }
+      omni.sharedSuggestions = reconciled.slice(0, 20);
     }
 
     // Auto-evict stale memories on startup (configurable via setting)
@@ -386,7 +400,13 @@ export class Omnimind {
 
   /** Delete a memory */
   async delete(id: string): Promise<Result<void>> {
-    return this.memoryStore.delete(id);
+    const deleted = await this.memoryStore.delete(id);
+    if (!deleted.ok) return deleted;
+    // The store cascades to the persisted suggestion row; keep the in-memory
+    // pending list (and cached context block) consistent too.
+    this.sharedSuggestions = this.sharedSuggestions.filter((s) => s.memoryId !== id);
+    this.sharedCache = null;
+    return ok(undefined);
   }
 
   /** Update a memory's mutable fields */
@@ -972,6 +992,12 @@ export class Omnimind {
   /** Record a publish suggestion for a freshly promoted L2/L3 memory. */
   private noteSharedSuggestion(memory: Memory): void {
     if (this.shared === null) return;
+    // Expired rows follow the same 24h TTL as the visible queue, pruned on
+    // every note rather than only at startup.
+    const pruned = this.memoryStore.pruneSharedSuggestions(Date.now() - TimeConstants.DAY);
+    if (!pruned.ok) {
+      console.warn(`[Omnimind] Failed to prune shared suggestions: ${pruned.error.message}`);
+    }
     this.sharedSuggestions = this.sharedSuggestions.filter((s) => s.memoryId !== memory.id);
     const suggestion: SharedSuggestion = {
       memoryId: memory.id,
@@ -980,7 +1006,17 @@ export class Omnimind {
       suggestedAt: Date.now(),
     };
     this.sharedSuggestions.unshift(suggestion);
-    if (this.sharedSuggestions.length > 20) this.sharedSuggestions.length = 20;
+    if (this.sharedSuggestions.length > 20) {
+      // Delete evicted rows too, otherwise an old suggestion reappears after
+      // a restart once newer ones are published.
+      const evicted = this.sharedSuggestions.splice(20);
+      for (const s of evicted) {
+        const deleted = this.memoryStore.deleteSharedSuggestion(s.memoryId);
+        if (!deleted.ok) {
+          console.warn(`[Omnimind] Failed to delete evicted shared suggestion: ${deleted.error.message}`);
+        }
+      }
+    }
     const persisted = this.memoryStore.saveSharedSuggestion(suggestion);
     if (!persisted.ok) {
       console.warn(`[Omnimind] Failed to persist shared suggestion: ${persisted.error.message}`);
