@@ -128,16 +128,37 @@ describe('POST /api/shared/test', () => {
     expect(auth).toBe(`Bearer ${token}`);
   });
 
-  it('POST with only url returns 400', async () => {
+  it('POST with only url uses the persisted token (masked-token form flow)', async () => {
+    // Persist a token only; the body supplies the (edited) URL. The saved
+    // token must be paired with the body URL — exactly what the GUI needs
+    // when the token field shows the '***' mask.
+    await post('/api/settings', { key: 'sharedToken', value: 'omt_persisted_token' });
+
+    const before = fakeSharedRequests.length;
+    const { status, data } = await post('/api/shared/test', {
+      url: `http://127.0.0.1:${fakeSharedPort}/mcp`,
+    });
+
+    expect(status).toBe(200);
+    expect(data.connected).toBe(false);
+    expect(fakeSharedRequests.length).toBeGreaterThan(before);
+    const auth = fakeSharedRequests[fakeSharedRequests.length - 1]?.headers.authorization;
+    expect(auth).toBe('Bearer omt_persisted_token');
+  });
+
+  it('POST with only url and no persisted token returns 400', async () => {
+    // Clear the persisted token saved by the previous test
+    await post('/api/settings', { key: 'sharedToken', value: '' });
+
     const { status, data } = await post('/api/shared/test', { url: 'http://127.0.0.1:9999/mcp' });
     expect(status).toBe(400);
-    expect(data.error).toBe('url and token must be provided together');
+    expect(data.error).toBeDefined();
   });
 
   it('POST with only token returns 400', async () => {
     const { status, data } = await post('/api/shared/test', { token: 'omt_only_token' });
     expect(status).toBe(400);
-    expect(data.error).toBe('url and token must be provided together');
+    expect(data.error).toBeDefined();
   });
 
   it('POST with a non-http(s) url returns 400', async () => {

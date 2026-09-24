@@ -487,11 +487,15 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
       const body = await readBody(req);
       const bodyUrl = typeof body.url === 'string' ? body.url : undefined;
       const bodyToken = typeof body.token === 'string' ? body.token : undefined;
-      if (bodyUrl !== undefined || bodyToken !== undefined) {
-        if (bodyUrl === undefined || bodyToken === undefined) {
-          sendJson(res, 400, { error: 'url and token must be provided together' });
-          return;
-        }
+      if (bodyToken !== undefined && bodyUrl === undefined) {
+        sendJson(res, 400, { error: 'url must be provided when token is provided' });
+        return;
+      }
+      if (bodyUrl !== undefined) {
+        // A body URL always wins over the persisted one (the GUI edits the
+        // URL field far more often than the token). When the body omits the
+        // token — e.g. the field still shows the saved '***' mask — the
+        // persisted token is paired with this URL below.
         let parsed: URL;
         try {
           parsed = new URL(bodyUrl);
@@ -514,14 +518,22 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
         sendJson(res, 200, { connected: false, reason: 'disabled' });
         return;
       }
-      const persistedUrl = omni!.getSetting('sharedServerUrl');
-      const persistedToken = omni!.getSetting('sharedToken');
-      if ((!persistedUrl.ok || !persistedUrl.value) || (!persistedToken.ok || !persistedToken.value)) {
-        sendJson(res, 200, { connected: false, reason: 'not configured' });
-        return;
+      if (serverUrl === undefined) {
+        const persistedUrl = omni!.getSetting('sharedServerUrl');
+        if (!persistedUrl.ok || !persistedUrl.value) {
+          sendJson(res, 200, { connected: false, reason: 'not configured' });
+          return;
+        }
+        serverUrl = persistedUrl.value;
       }
-      serverUrl = persistedUrl.value;
-      serverToken = persistedToken.value;
+      if (serverToken === undefined) {
+        const persistedToken = omni!.getSetting('sharedToken');
+        if (!persistedToken.ok || !persistedToken.value) {
+          sendJson(res, 400, { error: 'token must be provided in the body or saved via settings' });
+          return;
+        }
+        serverToken = persistedToken.value;
+      }
     }
 
     const client = new McpSharedClient({ serverUrl, token: serverToken, timeoutMs: 5000 });

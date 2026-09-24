@@ -197,15 +197,27 @@
     isTestingShared = true;
     sharedTestMsg = null;
     try {
-      // Test the current form values ad-hoc — the endpoint does not read (or
-      // save) persisted settings when a body is provided. When the token field
-      // still shows the '***' mask we cannot send it, so fall back to the GET
-      // path which uses the persisted token.
-      const canSendBody =
-        form.sharedToken !== '***' && form.sharedServerUrl.trim() !== '' && form.sharedToken.trim() !== '';
-      const result = canSendBody
-        ? await api.sharedTest(form.sharedServerUrl, form.sharedToken)
-        : await api.sharedTest();
+      // Always test the URL currently in the form, never a stale persisted
+      // one. When the token field shows the saved '***' mask it cannot be
+      // sent, so the server pairs the body URL with the persisted token.
+      const url = form.sharedServerUrl.trim();
+      const token = form.sharedToken.trim();
+      if (url === '') {
+        sharedTestOk = false;
+        sharedTestMsg = 'Server URL is required to test the connection';
+        return;
+      }
+      let result;
+      if (token === '***') {
+        result = await api.sharedTest(url);
+      } else {
+        if (token === '') {
+          sharedTestOk = false;
+          sharedTestMsg = 'Token is required to test the connection';
+          return;
+        }
+        result = await api.sharedTest(url, token);
+      }
       sharedTestOk = result.connected;
       sharedTestMsg = result.connected
         ? `Connected — ${result.items ?? 0} shared items visible (${result.superseded ?? 0} superseded).`
