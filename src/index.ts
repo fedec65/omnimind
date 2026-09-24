@@ -244,7 +244,14 @@ export class Omnimind {
       ) {
         let urlValid = true;
         try {
-          new URL(sharedUrl.value);
+          const parsed = new URL(sharedUrl.value);
+          if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+            urlValid = false;
+            console.error(
+              `[Omnimind] Unsupported sharedServerUrl scheme "${parsed.protocol}" — shared memory disabled. ` +
+              'Only http:// and https:// are allowed. Fix with: omnimind shared config --url <url>',
+            );
+          }
         } catch {
           urlValid = false;
           console.error(

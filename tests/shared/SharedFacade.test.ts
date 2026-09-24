@@ -234,6 +234,27 @@ describe('Omnimind facade — shared server wiring', () => {
     await omni2!.close();
   });
 
+  it('rejects non-http(s) sharedServerUrl scheme at create()', async () => {
+    const omni = await Omnimind.create({ dataDir: tmpDir, adapters: false });
+    omni.setSetting('sharedEnabled', 'true');
+    omni.setSetting('sharedServerUrl', 'file:///etc/passwd');
+    omni.setSetting('sharedToken', 'omt_abc');
+    await omni.close();
+
+    let omni2: Omnimind | null = null;
+    await expect(
+      (async () => {
+        omni2 = await Omnimind.create({ dataDir: tmpDir, adapters: false });
+      })(),
+    ).resolves.toBeUndefined();
+    expect(omni2!.shared).toBeNull();
+    expect(omni2!.sharedAvailable()).toBe(false);
+
+    const search = await omni2!.searchShared('anything');
+    expect(search.ok).toBe(false);
+    await omni2!.close();
+  });
+
   it('persists suggestions and deletes the row on successful publish', async () => {
     const fake = new FakeTransport();
     fake.enqueueText('{"id":"published-1"}');

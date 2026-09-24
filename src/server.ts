@@ -29,6 +29,7 @@ import { readFileSync } from 'fs';
 import { resolve, extname } from 'path';
 import { fileURLToPath } from 'url';
 import { Omnimind } from './index.js';
+import { resolveBindHost } from './serverHost.js';
 import { McpSharedClient } from './shared/McpSharedClient.js';
 import { buildFingerprint, resolveGitBranch } from './prediction/IntentPredictor.js';
 import { type EntityType } from './core/types.js';
@@ -71,10 +72,7 @@ const MIME_TYPES: Record<string, string> = {
 };
 
 const PORT = process.env.OMNIMIND_PORT ? parseInt(process.env.OMNIMIND_PORT, 10) : 8844;
-// Bind address: localhost-only by default so the API (and any configured
-// shared-server token) is never exposed on the LAN. Set OMNIMIND_HOST=0.0.0.0
-// to accept external connections.
-const HOST = process.env.OMNIMIND_HOST ?? '127.0.0.1';
+const HOST = resolveBindHost();
 const DATA_DIR = process.env.OMNIMIND_DATA_DIR;
 
 let omni: Omnimind | null = null;
