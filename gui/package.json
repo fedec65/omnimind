@@ -24,8 +24,8 @@
     "vite": "^8.0.10"
   },
   "dependencies": {
+    "@lucide/svelte": "^1.48.0",
     "@tauri-apps/api": "^2.11.0",
-    "@tauri-apps/plugin-shell": "^2.3.5",
-    "lucide-svelte": "^1.0.1"
+    "@tauri-apps/plugin-shell": "^2.3.5"
   }
 }

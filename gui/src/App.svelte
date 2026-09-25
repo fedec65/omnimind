@@ -13,7 +13,7 @@
   import PredictionsPanel from './lib/components/PredictionsPanel.svelte';
   import ConflictsPanel from './lib/components/ConflictsPanel.svelte';
   import PendingPublishPanel from './lib/components/PendingPublishPanel.svelte';
-  import { CloudUpload } from 'lucide-svelte';
+  import { Search, Calendar, Map, Network, Sparkles, Zap, Archive, CloudUpload, Settings } from '@lucide/svelte';
 
   let serverReady = $state(false);
   let version = $state('');
@@ -119,15 +119,15 @@
 
       <nav class="flex-1 p-2 space-y-1">
         {#each [
-          { id: 'search', label: 'Search', icon: '🔍' },
-          { id: 'timeline', label: 'Timeline', icon: '📅' },
-          { id: 'spatial', label: 'Spatial Map', icon: '🗺️' },
-          { id: 'graph', label: 'Concept Graph', icon: '🕸️' },
-          { id: 'predictions', label: 'Predictions', icon: '🔮' },
-          { id: 'conflicts', label: 'Conflicts', icon: '⚡' },
-          { id: 'archive', label: 'Archive', icon: '📦' },
+          { id: 'search', label: 'Search', icon: Search },
+          { id: 'timeline', label: 'Timeline', icon: Calendar },
+          { id: 'spatial', label: 'Spatial Map', icon: Map },
+          { id: 'graph', label: 'Concept Graph', icon: Network },
+          { id: 'predictions', label: 'Predictions', icon: Sparkles },
+          { id: 'conflicts', label: 'Conflicts', icon: Zap },
+          { id: 'archive', label: 'Archive', icon: Archive },
           { id: 'shared', label: 'Shared', icon: CloudUpload },
-          { id: 'settings', label: 'Settings', icon: '⚙️' },
+          { id: 'settings', label: 'Settings', icon: Settings },
         ] as tab}
           <button
             class="w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-2

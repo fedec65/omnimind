@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { CloudUpload, RefreshCw, Check } from 'lucide-svelte';
+  import { CloudUpload, RefreshCw, Check } from '@lucide/svelte';
   import { api, type SharedSuggestionDto } from '../api';
   import { appState } from '../stores.svelte';
 
