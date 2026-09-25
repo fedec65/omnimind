@@ -29,6 +29,7 @@ import { readFileSync } from 'fs';
 import { resolve, extname } from 'path';
 import { fileURLToPath } from 'url';
 import { Omnimind } from './index.js';
+import { resolveBindHost } from './serverHost.js';
 import { McpSharedClient } from './shared/McpSharedClient.js';
 import { buildFingerprint, resolveGitBranch } from './prediction/IntentPredictor.js';
 import { type EntityType } from './core/types.js';
@@ -71,10 +72,7 @@ const MIME_TYPES: Record<string, string> = {
 };
 
 const PORT = process.env.OMNIMIND_PORT ? parseInt(process.env.OMNIMIND_PORT, 10) : 8844;
-// Bind address: localhost-only by default so the API (and any configured
-// shared-server token) is never exposed on the LAN. Set OMNIMIND_HOST=0.0.0.0
-// to accept external connections.
-const HOST = process.env.OMNIMIND_HOST ?? '127.0.0.1';
+const HOST = resolveBindHost();
 const DATA_DIR = process.env.OMNIMIND_DATA_DIR;
 
 let omni: Omnimind | null = null;
@@ -478,21 +476,67 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
     }
   }
 
-  // Shared server connectivity test — builds an ad-hoc client from the
-  // currently persisted settings, so the GUI can verify them without a restart.
-  if (path === '/api/shared/test' && method === 'GET') {
-    const enabled = omni!.getSetting('sharedEnabled');
-    if (enabled.ok && enabled.value !== null && enabled.value !== 'true') {
-      sendJson(res, 200, { connected: false, reason: 'disabled' });
-      return;
+  // Shared server connectivity test — builds an ad-hoc client from either the
+  // request body (POST) or the currently persisted settings (GET, or POST
+  // without a body), so the GUI can verify credentials without saving them.
+  if (path === '/api/shared/test' && (method === 'GET' || method === 'POST')) {
+    let serverUrl: string | undefined;
+    let serverToken: string | undefined;
+
+    if (method === 'POST') {
+      const body = await readBody(req);
+      const bodyUrl = typeof body.url === 'string' ? body.url : undefined;
+      const bodyToken = typeof body.token === 'string' ? body.token : undefined;
+      if (bodyToken !== undefined && bodyUrl === undefined) {
+        sendJson(res, 400, { error: 'url must be provided when token is provided' });
+        return;
+      }
+      if (bodyUrl !== undefined) {
+        // A body URL always wins over the persisted one (the GUI edits the
+        // URL field far more often than the token). When the body omits the
+        // token — e.g. the field still shows the saved '***' mask — the
+        // persisted token is paired with this URL below.
+        let parsed: URL;
+        try {
+          parsed = new URL(bodyUrl);
+        } catch {
+          sendJson(res, 400, { error: 'url must be a valid URL' });
+          return;
+        }
+        if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+          sendJson(res, 400, { error: 'url must use http or https' });
+          return;
+        }
+        serverUrl = bodyUrl;
+        serverToken = bodyToken;
+      }
     }
-    const url = omni!.getSetting('sharedServerUrl');
-    const token = omni!.getSetting('sharedToken');
-    if ((!url.ok || !url.value) || (!token.ok || !token.value)) {
-      sendJson(res, 200, { connected: false, reason: 'not configured' });
-      return;
+
+    if (serverUrl === undefined || serverToken === undefined) {
+      const enabled = omni!.getSetting('sharedEnabled');
+      if (enabled.ok && enabled.value !== null && enabled.value !== 'true') {
+        sendJson(res, 200, { connected: false, reason: 'disabled' });
+        return;
+      }
+      if (serverUrl === undefined) {
+        const persistedUrl = omni!.getSetting('sharedServerUrl');
+        if (!persistedUrl.ok || !persistedUrl.value) {
+          sendJson(res, 200, { connected: false, reason: 'not configured' });
+          return;
+        }
+        serverUrl = persistedUrl.value;
+      }
+      if (serverToken === undefined) {
+        const persistedToken = omni!.getSetting('sharedToken');
+        if (!persistedToken.ok || !persistedToken.value) {
+          sendJson(res, 400, { error: 'token must be provided in the body or saved via settings' });
+          return;
+        }
+        serverToken = persistedToken.value;
+      }
     }
-    const client = new McpSharedClient({ serverUrl: url.value, token: token.value, timeoutMs: 5000 });
+
+    const client = new McpSharedClient({ serverUrl, token: serverToken, timeoutMs: 5000 });
     try {
       const status = await client.status();
       if (status.ok) {

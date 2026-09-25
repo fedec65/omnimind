@@ -252,9 +252,20 @@ export const api = {
       body: JSON.stringify({ key, value }),
     }),
 
-  sharedTest: () =>
+  // With a url, always POSTs it so the server tests the edited URL ad-hoc
+  // (no save side-effect). When `token` is omitted — the field still shows
+  // the saved '***' mask — the server pairs the body URL with the persisted
+  // token. Without a url, falls back to the GET path (persisted settings).
+  sharedTest: (url?: string, token?: string) =>
     fetchJson<{ connected: boolean; reason?: string; message?: string; items?: number; superseded?: number }>(
       '/api/shared/test',
+      url !== undefined
+        ? {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(token !== undefined ? { url, token } : { url }),
+          }
+        : undefined,
     ),
 
   importMemories: (json: string) =>

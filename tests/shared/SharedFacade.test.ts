@@ -233,4 +233,186 @@ describe('Omnimind facade — shared server wiring', () => {
     expect(search.ok).toBe(false);
     await omni2!.close();
   });
+
+  it('rejects non-http(s) sharedServerUrl scheme at create()', async () => {
+    const omni = await Omnimind.create({ dataDir: tmpDir, adapters: false });
+    omni.setSetting('sharedEnabled', 'true');
+    omni.setSetting('sharedServerUrl', 'file:///etc/passwd');
+    omni.setSetting('sharedToken', 'omt_abc');
+    await omni.close();
+
+    let omni2: Omnimind | null = null;
+    await expect(
+      (async () => {
+        omni2 = await Omnimind.create({ dataDir: tmpDir, adapters: false });
+      })(),
+    ).resolves.toBeUndefined();
+    expect(omni2!.shared).toBeNull();
+    expect(omni2!.sharedAvailable()).toBe(false);
+
+    const search = await omni2!.searchShared('anything');
+    expect(search.ok).toBe(false);
+    await omni2!.close();
+  });
+
+  it('persists suggestions and deletes the row on successful publish', async () => {
+    const fake = new FakeTransport();
+    fake.enqueueText('{"id":"published-1"}');
+    const omni = await Omnimind.create({ dataDir: tmpDir, adapters: false, sharedTransport: fake });
+
+    const stored = await omni.store('Promoted concept', { wing: 'eng' });
+    expect(stored.ok).toBe(true);
+    if (!stored.ok) return;
+    const updated = await omni.memoryStore.update(stored.value.id, { layer: 2 });
+    expect(updated.ok).toBe(true);
+    if (!updated.ok) return;
+
+    (omni as any).noteSharedSuggestion(updated.value);
+    const persisted = omni.memoryStore.loadSharedSuggestions();
+    expect(persisted.ok).toBe(true);
+    if (!persisted.ok) return;
+    expect(persisted.value.map((s) => s.memoryId)).toEqual([stored.value.id]);
+
+    const pub = await omni.publishMemoryToShared(stored.value.id, { visibility: 'org' });
+    expect(pub.ok).toBe(true);
+
+    expect(omni.getSharedSuggestions()).toEqual([]);
+    const after = omni.memoryStore.loadSharedSuggestions();
+    expect(after.ok).toBe(true);
+    if (!after.ok) return;
+    expect(after.value).toEqual([]);
+    await omni.close();
+  });
+
+  it('boot reloads persisted suggestions and prunes stale ones', async () => {
+    const fake = new FakeTransport();
+    const omni = await Omnimind.create({ dataDir: tmpDir, adapters: false, sharedTransport: fake });
+
+    const stored = await omni.store('Promoted concept', { wing: 'eng' });
+    expect(stored.ok).toBe(true);
+    if (!stored.ok) return;
+    const updated = await omni.memoryStore.update(stored.value.id, { layer: 2 });
+    expect(updated.ok).toBe(true);
+    if (!updated.ok) return;
+    (omni as any).noteSharedSuggestion(updated.value);
+
+    // A stale suggestion (25h old) inserted directly into the store
+    omni.memoryStore.saveSharedSuggestion({
+      memoryId: 'stale-one',
+      content: 'Old suggestion',
+      level: 2,
+      suggestedAt: Date.now() - 25 * 60 * 60 * 1000,
+    });
+    await omni.close();
+
+    // Reboot against the same data dir: fresh suggestion survives, stale one is pruned
+    const omni2 = await Omnimind.create({ dataDir: tmpDir, adapters: false, sharedTransport: new FakeTransport() });
+    const suggestions = omni2.getSharedSuggestions();
+    expect(suggestions.map((s) => s.memoryId)).toEqual([stored.value.id]);
+    expect(suggestions[0]!.content).toBe('Promoted concept');
+
+    // The stale row must be gone from the DB itself, not just TTL-filtered
+    const rows = omni2.memoryStore.loadSharedSuggestions();
+    expect(rows.ok).toBe(true);
+    if (!rows.ok) return;
+    expect(rows.value.map((s) => s.memoryId)).toEqual([stored.value.id]);
+    await omni2.close();
+  });
+
+  it('boot reconciles persisted suggestions against existing memories (orphan rows dropped)', async () => {
+    const fake = new FakeTransport();
+    const omni = await Omnimind.create({ dataDir: tmpDir, adapters: false, sharedTransport: fake });
+
+    const stored = await omni.store('Promoted concept', { wing: 'eng' });
+    expect(stored.ok).toBe(true);
+    if (!stored.ok) return;
+    const updated = await omni.memoryStore.update(stored.value.id, { layer: 2 });
+    expect(updated.ok).toBe(true);
+    if (!updated.ok) return;
+    (omni as any).noteSharedSuggestion(updated.value);
+
+    // Orphan suggestion: no memory with this id exists
+    omni.memoryStore.saveSharedSuggestion({
+      memoryId: 'ghost-memory',
+      content: 'Orphan suggestion',
+      level: 2,
+      suggestedAt: Date.now(),
+    });
+    await omni.close();
+
+    const omni2 = await Omnimind.create({ dataDir: tmpDir, adapters: false, sharedTransport: new FakeTransport() });
+    expect(omni2.getSharedSuggestions().map((s) => s.memoryId)).toEqual([stored.value.id]);
+
+    // The orphan row must be removed from the DB, not just filtered in memory
+    const rows = omni2.memoryStore.loadSharedSuggestions();
+    expect(rows.ok).toBe(true);
+    if (!rows.ok) return;
+    expect(rows.value.map((s) => s.memoryId)).toEqual([stored.value.id]);
+    await omni2.close();
+  });
+
+  it('deleting a memory drops its suggestion from memory and from SQLite', async () => {
+    const fake = new FakeTransport();
+    const omni = await Omnimind.create({ dataDir: tmpDir, adapters: false, sharedTransport: fake });
+
+    const stored = await omni.store('Promoted concept', { wing: 'eng' });
+    expect(stored.ok).toBe(true);
+    if (!stored.ok) return;
+    const updated = await omni.memoryStore.update(stored.value.id, { layer: 2 });
+    expect(updated.ok).toBe(true);
+    if (!updated.ok) return;
+    (omni as any).noteSharedSuggestion(updated.value);
+
+    const deleted = await omni.delete(stored.value.id);
+    expect(deleted.ok).toBe(true);
+
+    expect(omni.getSharedSuggestions()).toEqual([]);
+    const rows = omni.memoryStore.loadSharedSuggestions();
+    expect(rows.ok).toBe(true);
+    if (!rows.ok) return;
+    expect(rows.value).toEqual([]);
+    await omni.close();
+  });
+
+  it('cap eviction at 21 suggestions deletes the overflow row from SQLite', async () => {
+    const fake = new FakeTransport();
+    const omni = await Omnimind.create({ dataDir: tmpDir, adapters: false, sharedTransport: fake });
+
+    for (let i = 1; i <= 21; i++) {
+      (omni as any).noteSharedSuggestion({ id: `m${i}`, content: `concept ${i}`, layer: 2 });
+    }
+
+    // In-memory list keeps the 20 newest
+    expect(omni.getSharedSuggestions().map((s: { memoryId: string }) => s.memoryId)).toEqual(
+      Array.from({ length: 20 }, (_, i) => `m${21 - i}`),
+    );
+
+    // The evicted row must not linger in the DB to reappear after restart
+    const rows = omni.memoryStore.loadSharedSuggestions();
+    expect(rows.ok).toBe(true);
+    if (!rows.ok) return;
+    expect(rows.value).toHaveLength(20);
+    expect(rows.value.map((s) => s.memoryId)).not.toContain('m1');
+    await omni.close();
+  });
+
+  it('noteSharedSuggestion prunes expired rows during operation, not only at boot', async () => {
+    const fake = new FakeTransport();
+    const omni = await Omnimind.create({ dataDir: tmpDir, adapters: false, sharedTransport: fake });
+
+    omni.memoryStore.saveSharedSuggestion({
+      memoryId: 'expired-row',
+      content: 'Expired suggestion',
+      level: 2,
+      suggestedAt: Date.now() - 25 * 60 * 60 * 1000,
+    });
+
+    (omni as any).noteSharedSuggestion({ id: 'm1', content: 'fresh concept', layer: 2 });
+
+    const rows = omni.memoryStore.loadSharedSuggestions();
+    expect(rows.ok).toBe(true);
+    if (!rows.ok) return;
+    expect(rows.value.map((s) => s.memoryId)).toEqual(['m1']);
+    await omni.close();
+  });
 });

@@ -244,7 +244,14 @@ export class Omnimind {
       ) {
         let urlValid = true;
         try {
-          new URL(sharedUrl.value);
+          const parsed = new URL(sharedUrl.value);
+          if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+            urlValid = false;
+            console.error(
+              `[Omnimind] Unsupported sharedServerUrl scheme "${parsed.protocol}" — shared memory disabled. ` +
+              'Only http:// and https:// are allowed. Fix with: omnimind shared config --url <url>',
+            );
+          }
         } catch {
           urlValid = false;
           console.error(
@@ -264,6 +271,37 @@ export class Omnimind {
 
     const omni = new Omnimind(store, bus, predictor, patternStore, activityTracker, contextInjector, shared);
     console.log(`[Omnimind] Initialized at ${dbPath}`);
+
+    // Reload persisted shared publish suggestions (survives restarts; the
+    // CLI reads the same store instead of an empty process-local list).
+    // Best-effort: a persistence failure degrades to in-memory only.
+    const suggestionsLoaded = store.loadSharedSuggestions();
+    if (!suggestionsLoaded.ok) {
+      console.warn(`[Omnimind] Failed to load shared suggestions: ${suggestionsLoaded.error.message}`);
+    } else {
+      const suggestionsCutoff = Date.now() - TimeConstants.DAY;
+      const pruned = store.pruneSharedSuggestions(suggestionsCutoff);
+      if (!pruned.ok) {
+        console.warn(`[Omnimind] Failed to prune shared suggestions: ${pruned.error.message}`);
+      }
+      // Keep only suggestions whose memory still exists — a deleted memory
+      // must not resurface as an orphan suggestion, and publish refuses
+      // missing ids anyway. Orphan rows are removed from the DB.
+      const reconciled: SharedSuggestion[] = [];
+      for (const s of suggestionsLoaded.value) {
+        if (s.suggestedAt < suggestionsCutoff) continue;
+        const memory = await store.get(s.memoryId);
+        if (!memory.ok || memory.value === null) {
+          const dropped = store.deleteSharedSuggestion(s.memoryId);
+          if (!dropped.ok) {
+            console.warn(`[Omnimind] Failed to drop orphan shared suggestion: ${dropped.error.message}`);
+          }
+          continue;
+        }
+        reconciled.push(s);
+      }
+      omni.sharedSuggestions = reconciled.slice(0, 20);
+    }
 
     // Auto-evict stale memories on startup (configurable via setting)
     const autoEvictSetting = omni.getSetting('autoEvictDays');
@@ -362,7 +400,13 @@ export class Omnimind {
 
   /** Delete a memory */
   async delete(id: string): Promise<Result<void>> {
-    return this.memoryStore.delete(id);
+    const deleted = await this.memoryStore.delete(id);
+    if (!deleted.ok) return deleted;
+    // The store cascades to the persisted suggestion row; keep the in-memory
+    // pending list (and cached context block) consistent too.
+    this.sharedSuggestions = this.sharedSuggestions.filter((s) => s.memoryId !== id);
+    this.sharedCache = null;
+    return ok(undefined);
   }
 
   /** Update a memory's mutable fields */
@@ -900,6 +944,10 @@ export class Omnimind {
       return err(result.error);
     }
     this.sharedSuggestions = this.sharedSuggestions.filter((s) => s.memoryId !== id);
+    const deleted = this.memoryStore.deleteSharedSuggestion(id);
+    if (!deleted.ok) {
+      console.warn(`[Omnimind] Failed to delete shared suggestion: ${deleted.error.message}`);
+    }
     this.sharedCache = null;
     return ok(result.value);
   }
@@ -944,14 +992,35 @@ export class Omnimind {
   /** Record a publish suggestion for a freshly promoted L2/L3 memory. */
   private noteSharedSuggestion(memory: Memory): void {
     if (this.shared === null) return;
+    // Expired rows follow the same 24h TTL as the visible queue, pruned on
+    // every note rather than only at startup.
+    const pruned = this.memoryStore.pruneSharedSuggestions(Date.now() - TimeConstants.DAY);
+    if (!pruned.ok) {
+      console.warn(`[Omnimind] Failed to prune shared suggestions: ${pruned.error.message}`);
+    }
     this.sharedSuggestions = this.sharedSuggestions.filter((s) => s.memoryId !== memory.id);
-    this.sharedSuggestions.unshift({
+    const suggestion: SharedSuggestion = {
       memoryId: memory.id,
       content: memory.content,
       level: memory.layer,
       suggestedAt: Date.now(),
-    });
-    if (this.sharedSuggestions.length > 20) this.sharedSuggestions.length = 20;
+    };
+    this.sharedSuggestions.unshift(suggestion);
+    if (this.sharedSuggestions.length > 20) {
+      // Delete evicted rows too, otherwise an old suggestion reappears after
+      // a restart once newer ones are published.
+      const evicted = this.sharedSuggestions.splice(20);
+      for (const s of evicted) {
+        const deleted = this.memoryStore.deleteSharedSuggestion(s.memoryId);
+        if (!deleted.ok) {
+          console.warn(`[Omnimind] Failed to delete evicted shared suggestion: ${deleted.error.message}`);
+        }
+      }
+    }
+    const persisted = this.memoryStore.saveSharedSuggestion(suggestion);
+    if (!persisted.ok) {
+      console.warn(`[Omnimind] Failed to persist shared suggestion: ${persisted.error.message}`);
+    }
     this.sharedCache = null;
   }
 
