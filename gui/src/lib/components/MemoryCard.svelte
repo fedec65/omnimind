@@ -2,6 +2,7 @@
   import { setError } from '../stores.svelte.ts';
   import { api } from '../api';
   import type { SearchResult } from '../api';
+  import { Pin, Pencil } from '@lucide/svelte';
 
   let { result }: { result: SearchResult } = $props();
   const m = $derived(result.memory);
@@ -110,7 +111,7 @@
           <span>{result.matchType}</span>
           <span>{m.accessCount} access{m.accessCount === 1 ? '' : 'es'}</span>
           {#if m.pinned}
-            <span class="text-[var(--accent)]">📌 Pinned</span>
+            <span class="text-[var(--accent)] inline-flex items-center gap-1"><Pin size={12} /> Pinned</span>
           {/if}
         </div>
       </div>
@@ -120,7 +121,7 @@
           class="text-[var(--text-muted)] hover:text-[var(--accent)] text-xs px-2 py-1 rounded transition-colors"
           title="Edit"
         >
-          ✎
+          <Pencil size={12} />
         </button>
         <button
           onclick={deleteMemory}

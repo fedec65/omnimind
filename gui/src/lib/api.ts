@@ -154,6 +154,13 @@ export interface SystemStats {
   activity: { isRunning: boolean; recentFiles: number; recentTools: number };
 }
 
+export interface SharedSuggestionDto {
+  memoryId: string;
+  content: string;
+  level: number;
+  suggestedAt: number;
+}
+
 async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
   const base = await getBaseUrl();
   const res = await fetch(`${base}${path}`, init);
@@ -266,6 +273,20 @@ export const api = {
             body: JSON.stringify(token !== undefined ? { url, token } : { url }),
           }
         : undefined,
+    ),
+
+  sharedSuggestions: () => fetchJson<SharedSuggestionDto[]>('/api/shared/suggestions'),
+
+  sharedPublish: (id: string, visibility: 'org' | 'team', workspaceId?: string) =>
+    fetchJson<{ ok: boolean; sharedId: string }>(
+      '/api/shared/publish',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(
+          workspaceId !== undefined ? { id, visibility, workspaceId } : { id, visibility },
+        ),
+      },
     ),
 
   importMemories: (json: string) =>

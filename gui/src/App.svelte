@@ -12,6 +12,8 @@
   import ArchivePanel from './lib/components/ArchivePanel.svelte';
   import PredictionsPanel from './lib/components/PredictionsPanel.svelte';
   import ConflictsPanel from './lib/components/ConflictsPanel.svelte';
+  import PendingPublishPanel from './lib/components/PendingPublishPanel.svelte';
+  import { Search, Calendar, Map, Network, Sparkles, Zap, Archive, CloudUpload, Settings } from '@lucide/svelte';
 
   let serverReady = $state(false);
   let version = $state('');
@@ -117,21 +119,27 @@
 
       <nav class="flex-1 p-2 space-y-1">
         {#each [
-          { id: 'search', label: 'Search', icon: '🔍' },
-          { id: 'timeline', label: 'Timeline', icon: '📅' },
-          { id: 'spatial', label: 'Spatial Map', icon: '🗺️' },
-          { id: 'graph', label: 'Concept Graph', icon: '🕸️' },
-          { id: 'predictions', label: 'Predictions', icon: '🔮' },
-          { id: 'conflicts', label: 'Conflicts', icon: '⚡' },
-          { id: 'archive', label: 'Archive', icon: '📦' },
-          { id: 'settings', label: 'Settings', icon: '⚙️' },
+          { id: 'search', label: 'Search', icon: Search },
+          { id: 'timeline', label: 'Timeline', icon: Calendar },
+          { id: 'spatial', label: 'Spatial Map', icon: Map },
+          { id: 'graph', label: 'Concept Graph', icon: Network },
+          { id: 'predictions', label: 'Predictions', icon: Sparkles },
+          { id: 'conflicts', label: 'Conflicts', icon: Zap },
+          { id: 'archive', label: 'Archive', icon: Archive },
+          { id: 'shared', label: 'Shared', icon: CloudUpload },
+          { id: 'settings', label: 'Settings', icon: Settings },
         ] as tab}
           <button
             class="w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-2
               {appState.activeTab === tab.id ? 'bg-[var(--accent-glow)] text-[var(--accent)]' : 'hover:bg-[var(--surface-hover)] text-[var(--text)]'}"
             onclick={() => appState.activeTab = tab.id as typeof appState.activeTab}
           >
-            <span>{tab.icon}</span>
+            {#if typeof tab.icon === 'string'}
+              <span>{tab.icon}</span>
+            {:else}
+              {@const Icon = tab.icon}
+              <Icon size={16} />
+            {/if}
             <span>{tab.label}</span>
           </button>
         {/each}
@@ -174,6 +182,8 @@
           <PredictionsPanel />
         {:else if appState.activeTab === 'conflicts'}
           <ConflictsPanel />
+        {:else if appState.activeTab === 'shared'}
+          <PendingPublishPanel />
         {:else if appState.activeTab === 'settings'}
           <SettingsPanel />
         {/if}

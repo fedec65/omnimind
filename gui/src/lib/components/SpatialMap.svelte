@@ -3,6 +3,7 @@
   import { api } from '../api';
   import type { Memory, Relation } from '../api';
   import * as d3 from 'd3';
+  import { Pin } from '@lucide/svelte';
 
   let svgEl: SVGSVGElement;
   let containerEl: HTMLDivElement;
@@ -316,7 +317,7 @@
           </div>
         </div>
         {#if selectedMemory.pinned}
-          <div class="text-amber-400 text-xs">📌 Pinned</div>
+          <div class="text-amber-400 text-xs flex items-center gap-1"><Pin size={12} /> Pinned</div>
         {/if}
         {#if selectedMemory.sourceId}
           <div class="text-[var(--text-muted)] text-xs">Session: {selectedMemory.sourceId.substring(0, 8)}</div>

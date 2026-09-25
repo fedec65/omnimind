@@ -117,7 +117,7 @@ export class Omnimind {
   readonly bus: MemoryBus;
   readonly activityTracker: ActivityTracker;
   readonly contextInjector: ContextInjector;
-  readonly shared: SharedClient | null;
+  shared: SharedClient | null;
   private sharedAuthFailed = false;
   private sharedSuggestions: SharedSuggestion[] = [];
   private sharedCache: { key: string; text: string; at: number } | null = null;
@@ -900,6 +900,44 @@ export class Omnimind {
   /** True when the shared server client is configured and authenticated. */
   sharedAvailable(): boolean {
     return this.shared !== null && !this.sharedAuthFailed;
+  }
+
+  /**
+   * Rebuild the shared server client from current settings. Called when the
+   * shared settings change at runtime (e.g. GUI Settings panel save), so a
+   * restart is not required. Best-effort: on any failure the client stays
+   * local-only.
+   */
+  async reloadShared(): Promise<void> {
+    await this.shared?.close().catch(() => {});
+    this.shared = null;
+    this.sharedAuthFailed = false;
+    const enabled = this.memoryStore.getSetting('sharedEnabled');
+    const url = this.memoryStore.getSetting('sharedServerUrl');
+    const token = this.memoryStore.getSetting('sharedToken');
+    if (
+      !enabled.ok || enabled.value !== 'true' ||
+      !url.ok || url.value === null || url.value.length === 0 ||
+      !token.ok || token.value === null || token.value.length === 0
+    ) {
+      return;
+    }
+    let parsed: URL;
+    try {
+      parsed = new URL(url.value);
+    } catch {
+      console.error(`[Omnimind] Malformed sharedServerUrl "${url.value}" — shared memory disabled.`);
+      return;
+    }
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      console.error(`[Omnimind] Unsupported sharedServerUrl scheme "${parsed.protocol}" — shared memory disabled.`);
+      return;
+    }
+    try {
+      this.shared = new McpSharedClient({ serverUrl: url.value, token: token.value });
+    } catch (error) {
+      console.error(`[Omnimind] Shared client failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
   /** Local L2/L3 memories pending a publish decision (max 20, 24h TTL). */
