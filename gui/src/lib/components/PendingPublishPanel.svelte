@@ -25,7 +25,19 @@
     loadError = null;
     try {
       suggestions = await api.sharedSuggestions();
-      notConfigured = false;
+      if (suggestions.length === 0) {
+        // An empty list is ambiguous: shared may be unconfigured, or simply
+        // nothing is pending. Disambiguate via the test endpoint.
+        try {
+          const test = await api.sharedTest();
+          notConfigured =
+            !test.connected && (test.reason === 'not configured' || test.reason === 'disabled');
+        } catch {
+          notConfigured = false;
+        }
+      } else {
+        notConfigured = false;
+      }
     } catch (e) {
       // Distinguish "shared not configured" from real errors via the test
       // endpoint (already exists in api.ts).
@@ -73,6 +85,7 @@
       disabled={loading}
       class="p-2 rounded-lg border border-[var(--border)] text-[var(--text-muted)] hover:text-[var(--accent)] transition-colors disabled:opacity-50"
       title="Refresh"
+      aria-label="Refresh"
     >
       <RefreshCw size={16} class={loading ? 'animate-spin' : ''} />
     </button>
