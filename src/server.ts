@@ -558,6 +558,42 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
     return;
   }
 
+  // Shared publish suggestions — local L2/L3 memories pending a publish
+  // decision (noted on promotion, 24h TTL, cap 20).
+  if (path === '/api/shared/suggestions' && method === 'GET') {
+    sendJson(res, 200, omni!.getSharedSuggestions());
+    return;
+  }
+
+  // Publish a local L2/L3 memory to the shared server (explicit user action).
+  if (path === '/api/shared/publish' && method === 'POST') {
+    if (!omni!.sharedAvailable()) {
+      sendJson(res, 503, { error: 'Shared memory server not configured' });
+      return;
+    }
+    const body = await readBody(req);
+    const id = typeof body.id === 'string' ? body.id : undefined;
+    const visibility =
+      body.visibility === 'team' || body.visibility === 'org' ? body.visibility : undefined;
+    const workspaceId = typeof body.workspaceId === 'string' ? body.workspaceId : undefined;
+    if (id === undefined || visibility === undefined) {
+      sendJson(res, 400, { error: 'id and visibility (org|team) are required' });
+      return;
+    }
+    const result = await omni!.publishMemoryToShared(id, {
+      visibility,
+      ...(workspaceId !== undefined ? { workspaceId } : {}),
+    });
+    if (!result.ok) {
+      const msg = result.error.message;
+      const notFound = msg.startsWith('Memory not found') || msg.startsWith('Only L2/L3');
+      sendJson(res, notFound ? 404 : 502, { error: msg });
+      return;
+    }
+    sendJson(res, 200, { ok: true, sharedId: result.value });
+    return;
+  }
+
   // MCP client setup (Connect AI tools)
   if (path === '/api/setup/clients' && method === 'GET') {
     const cliTargets = process.env.OMNIMIND_CLI_TARGETS?.split(':');
