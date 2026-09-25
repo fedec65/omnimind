@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { CloudUpload, RefreshCw, Check } from '@lucide/svelte';
+  import { CloudUpload, RefreshCw } from '@lucide/svelte';
   import { api, type SharedSuggestionDto } from '../api';
   import { appState } from '../stores.svelte';
 
@@ -8,8 +8,9 @@
   let loading = $state(true);
   let loadError = $state<string | null>(null);
   let visibility = $state<Record<string, 'org' | 'team'>>({});
+  let workspaceId = $state<Record<string, string>>({});
   let publishing = $state<Record<string, boolean>>({});
-  let published = $state<Record<string, boolean>>({});
+  let hidden = $state<Record<string, true>>({});
   let rowError = $state<Record<string, string>>({});
 
   function ageOf(suggestedAt: number): string {
@@ -24,7 +25,8 @@
     loading = true;
     loadError = null;
     try {
-      suggestions = await api.sharedSuggestions();
+      const fetched = await api.sharedSuggestions();
+      suggestions = fetched.filter((s) => !hidden[s.memoryId]);
       if (suggestions.length === 0) {
         // An empty list is ambiguous: shared may be unconfigured, or simply
         // nothing is pending. Disambiguate via the test endpoint.
@@ -59,8 +61,14 @@
     publishing = { ...publishing, [memoryId]: true };
     rowError = { ...rowError, [memoryId]: '' };
     try {
-      await api.sharedPublish(memoryId, visibility[memoryId] ?? 'org');
-      published = { ...published, [memoryId]: true };
+      const vis = visibility[memoryId] ?? 'org';
+      const ws = workspaceId[memoryId]?.trim();
+      if (vis === 'team' && ws) {
+        await api.sharedPublish(memoryId, vis, ws);
+      } else {
+        await api.sharedPublish(memoryId, vis);
+      }
+      hidden = { ...hidden, [memoryId]: true };
       suggestions = suggestions.filter((s) => s.memoryId !== memoryId);
     } catch (e) {
       rowError = { ...rowError, [memoryId]: e instanceof Error ? e.message : String(e) };
@@ -142,16 +150,22 @@
                 </button>
               {/each}
             </div>
+            {#if (visibility[s.memoryId] ?? 'org') === 'team'}
+              <input
+                type="text"
+                bind:value={workspaceId[s.memoryId]}
+                placeholder="Workspace ID (uuid)"
+                class="w-40 px-2 py-1.5 text-xs rounded-lg border border-[var(--border)] bg-transparent text-[var(--text)] placeholder:text-[var(--text-muted)] focus:outline-none focus:border-[var(--accent)]"
+              />
+            {/if}
             <button
               onclick={() => publish(s.memoryId)}
-              disabled={publishing[s.memoryId] || published[s.memoryId]}
+              disabled={publishing[s.memoryId] ||
+                ((visibility[s.memoryId] ?? 'org') === 'team' &&
+                  !(workspaceId[s.memoryId] ?? '').trim())}
               class="px-3 py-1.5 text-xs rounded-lg bg-[var(--accent)] text-white hover:opacity-90 transition-opacity disabled:opacity-50 flex items-center gap-1"
             >
-              {#if published[s.memoryId]}
-                <Check size={12} /> Published
-              {:else}
-                {publishing[s.memoryId] ? 'Publishing…' : 'Publish'}
-              {/if}
+              {publishing[s.memoryId] ? 'Publishing…' : 'Publish'}
             </button>
           </div>
         </div>
