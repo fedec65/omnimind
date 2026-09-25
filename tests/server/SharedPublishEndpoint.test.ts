@@ -27,12 +27,21 @@ class FakeTransport implements SharedToolTransport {
 }
 
 /** Minimal JSON-RPC responder sufficient for the MCP SDK handshake. */
-function startFakeShared(): Promise<{ server: HttpServer; port: number }> {
+function startFakeShared(): Promise<{
+  server: HttpServer;
+  port: number;
+  toolCalls: Array<{ name: string; args: Record<string, unknown> }>;
+}> {
+  const toolCalls: Array<{ name: string; args: Record<string, unknown> }> = [];
   const server = createServer((req, res) => {
     let body = '';
     req.on('data', (c) => (body += c));
     req.on('end', () => {
-      let rpc: { id?: number | string; method?: string } = {};
+      let rpc: {
+        id?: number | string;
+        method?: string;
+        params?: { name?: string; arguments?: Record<string, unknown> };
+      } = {};
       try {
         rpc = JSON.parse(body);
       } catch {
@@ -49,6 +58,7 @@ function startFakeShared(): Promise<{ server: HttpServer; port: number }> {
           serverInfo: { name: 'fake-shared', version: '0.0.1' },
         });
       } else if (rpc.method === 'tools/call') {
+        toolCalls.push({ name: rpc.params?.name ?? '', args: rpc.params?.arguments ?? {} });
         respond({ content: [{ type: 'text', text: '{"id":"shared-1"}' }], isError: false });
       } else {
         respond({}); // notifications/initialized, pings
@@ -57,7 +67,7 @@ function startFakeShared(): Promise<{ server: HttpServer; port: number }> {
   });
   return new Promise((resolve) => {
     server.listen(0, '127.0.0.1', () => {
-      resolve({ server, port: (server.address() as AddressInfo).port });
+      resolve({ server, port: (server.address() as AddressInfo).port, toolCalls });
     });
   });
 }
@@ -69,12 +79,13 @@ describe('Shared suggestions + publish endpoints', () => {
   let dataDir: string;
   let fakeShared: HttpServer;
   let fakeSharedPort: number;
+  let toolCalls: Array<{ name: string; args: Record<string, unknown> }>;
   let memoryId: string;
 
   beforeAll(async () => {
     home = mkdtempSync(join(tmpdir(), 'omnimind-sharedpub-home-'));
     dataDir = mkdtempSync(join(tmpdir(), 'omnimind-sharedpub-data-'));
-    ({ server: fakeShared, port: fakeSharedPort } = await startFakeShared());
+    ({ server: fakeShared, port: fakeSharedPort, toolCalls } = await startFakeShared());
 
     // Seed via the facade: real memory L2 + real suggestion row + settings.
     const omni = await Omnimind.create({ dataDir, adapters: false, sharedTransport: new FakeTransport() });
@@ -180,6 +191,13 @@ describe('Shared suggestions + publish endpoints', () => {
     expect(data.ok).toBe(true);
     expect(data.sharedId).toBe('shared-1');
 
+    // The recorded shared_publish call carries the publish arguments.
+    const publishCall = toolCalls.find((c) => c.name === 'shared_publish');
+    expect(publishCall).toBeDefined();
+    expect(publishCall!.args.visibility).toBe('org');
+    expect(String(publishCall!.args.content)).toContain('Promoted concept');
+    expect(publishCall!.args).not.toHaveProperty('workspace_id');
+
     // The pending list is now empty and the DB row is gone (not just filtered)
     const after = await get('/api/shared/suggestions');
     expect(after.data).toHaveLength(0);
@@ -187,5 +205,16 @@ describe('Shared suggestions + publish endpoints', () => {
     const rows = db.prepare('SELECT COUNT(*) AS n FROM shared_suggestions').get() as { n: number };
     db.close();
     expect(rows.n).toBe(0);
+  });
+
+  it('POST /api/shared/publish rejects a malformed JSON body with 400', async () => {
+    const res = await fetch(`http://localhost:${port}/api/shared/publish`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{"id":',
+    });
+    expect(res.status).toBe(400);
+    const data = await res.json();
+    expect(data.error).toBe('invalid JSON body');
   });
 });

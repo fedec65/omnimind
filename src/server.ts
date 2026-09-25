@@ -84,10 +84,22 @@ async function main(): Promise<void> {
   const skipAdapters = process.env.OMNIMIND_SKIP_ADAPTERS === '1';
 
   const server = createServer((req, res) => {
-    // CORS for Tauri origin
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    // CORS: echo the origin only for same-machine browser pages and the Tauri
+    // webview. Requests without an Origin header (curl, MCP clients, same-
+    // origin GUI) get no CORS headers at all; any other origin is left
+    // headerless so the browser blocks the response.
+    const origin = req.headers.origin;
+    if (
+      origin !== undefined &&
+      (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin) ||
+        origin.startsWith('tauri://') ||
+        origin.startsWith('https://tauri.localhost'))
+    ) {
+      res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader('Vary', 'Origin');
+      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    }
 
     if (req.method === 'OPTIONS') {
       res.writeHead(204);
@@ -471,6 +483,11 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
         sendJson(res, 500, { error: result.error.message });
         return;
       }
+      if (key === 'sharedEnabled' || key === 'sharedServerUrl' || key === 'sharedToken') {
+        // Rebuild the shared client from the new settings — publishing must
+        // work without a restart.
+        await omni!.reloadShared();
+      }
       sendJson(res, 200, { ok: true });
       return;
     }
@@ -571,11 +588,28 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
       sendJson(res, 503, { error: 'Shared memory server not configured' });
       return;
     }
-    const body = await readBody(req);
+    let body: Record<string, unknown>;
+    try {
+      body = await readBody(req);
+    } catch {
+      sendJson(res, 400, { error: 'invalid JSON body' });
+      return;
+    }
+    if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+      sendJson(res, 400, { error: 'body must be a JSON object' });
+      return;
+    }
     const id = typeof body.id === 'string' ? body.id : undefined;
     const visibility =
       body.visibility === 'team' || body.visibility === 'org' ? body.visibility : undefined;
-    const workspaceId = typeof body.workspaceId === 'string' ? body.workspaceId : undefined;
+    let workspaceId: string | undefined;
+    if (body.workspaceId !== undefined) {
+      if (typeof body.workspaceId !== 'string') {
+        sendJson(res, 400, { error: 'workspaceId must be a string' });
+        return;
+      }
+      workspaceId = body.workspaceId;
+    }
     if (id === undefined || visibility === undefined) {
       sendJson(res, 400, { error: 'id and visibility (org|team) are required' });
       return;
