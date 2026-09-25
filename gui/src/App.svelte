@@ -12,6 +12,8 @@
   import ArchivePanel from './lib/components/ArchivePanel.svelte';
   import PredictionsPanel from './lib/components/PredictionsPanel.svelte';
   import ConflictsPanel from './lib/components/ConflictsPanel.svelte';
+  import PendingPublishPanel from './lib/components/PendingPublishPanel.svelte';
+  import { CloudUpload } from 'lucide-svelte';
 
   let serverReady = $state(false);
   let version = $state('');
@@ -124,6 +126,7 @@
           { id: 'predictions', label: 'Predictions', icon: '🔮' },
           { id: 'conflicts', label: 'Conflicts', icon: '⚡' },
           { id: 'archive', label: 'Archive', icon: '📦' },
+          { id: 'shared', label: 'Shared', icon: CloudUpload },
           { id: 'settings', label: 'Settings', icon: '⚙️' },
         ] as tab}
           <button
@@ -131,7 +134,12 @@
               {appState.activeTab === tab.id ? 'bg-[var(--accent-glow)] text-[var(--accent)]' : 'hover:bg-[var(--surface-hover)] text-[var(--text)]'}"
             onclick={() => appState.activeTab = tab.id as typeof appState.activeTab}
           >
-            <span>{tab.icon}</span>
+            {#if typeof tab.icon === 'string'}
+              <span>{tab.icon}</span>
+            {:else}
+              {@const Icon = tab.icon}
+              <Icon size={16} />
+            {/if}
             <span>{tab.label}</span>
           </button>
         {/each}
@@ -174,6 +182,8 @@
           <PredictionsPanel />
         {:else if appState.activeTab === 'conflicts'}
           <ConflictsPanel />
+        {:else if appState.activeTab === 'shared'}
+          <PendingPublishPanel />
         {:else if appState.activeTab === 'settings'}
           <SettingsPanel />
         {/if}
