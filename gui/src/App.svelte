@@ -3,6 +3,8 @@
   import { api } from './lib/api';
   import { checkForUpdates, skipVersion } from './lib/updates';
   import { open as shellOpen } from '@tauri-apps/plugin-shell';
+  import { check as checkUpdater } from '@tauri-apps/plugin-updater';
+  import { relaunch } from '@tauri-apps/plugin-process';
   import SearchPanel from './lib/components/SearchPanel.svelte';
   import StatsPanel from './lib/components/StatsPanel.svelte';
   import TimelineView from './lib/components/TimelineView.svelte';
@@ -85,17 +87,9 @@
 
   async function checkNativeUpdate(): Promise<NativeUpdate | null> {
     try {
-      const w = window as unknown as {
-        __TAURI__?: {
-          updater?: {
-            check: () => Promise<{
-              version: string;
-              downloadAndInstall: () => Promise<void>;
-            } | null>;
-          };
-        };
-      };
-      const update = await w.__TAURI__?.updater?.check?.();
+      // Throws outside the Tauri webview (e.g. dev in a plain browser) —
+      // the GitHub-release banner handles that case.
+      const update = await checkUpdater();
       return update ?? null;
     } catch {
       return null;
@@ -108,15 +102,19 @@
     nativeUpdateError = false;
     try {
       await nativeUpdate.downloadAndInstall();
-      const w = window as unknown as {
-        __TAURI__?: { process?: { relaunch: () => Promise<void> } };
-      };
-      await w.__TAURI__?.process?.relaunch?.();
+      await relaunch();
     } catch {
       // Leave the banner up so the user can retry; fall back to the release
       // page if the in-app install keeps failing.
       nativeUpdateError = true;
       installingUpdate = false;
+    }
+  }
+
+  function dismissNativeUpdate() {
+    if (nativeUpdate) {
+      skipVersion(nativeUpdate.version);
+      nativeUpdate = null;
     }
   }
 
@@ -214,6 +212,7 @@
               <button class="hover:underline font-medium disabled:opacity-50" disabled={installingUpdate} onclick={installNativeUpdate}>
                 {installingUpdate ? 'Installing…' : 'Update & Restart'}
               </button>
+              <button class="hover:underline text-[var(--text-muted)]" onclick={dismissNativeUpdate}>Later</button>
             {/if}
           </div>
         </div>

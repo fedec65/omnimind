@@ -12,7 +12,6 @@ export interface UpdateInfo {
 const GITHUB_API_URL =
   'https://api.github.com/repos/fedec65/omnimind/releases/latest';
 const CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000; // 1 day
-const STORAGE_KEY_LAST_CHECK = 'omnimind_update_last_check';
 const STORAGE_KEY_SKIP_VERSION = 'omnimind_update_skip_version';
 const STORAGE_KEY_LATEST = 'omnimind_update_latest';
 
@@ -61,44 +60,39 @@ export async function checkForUpdates(
 ): Promise<UpdateInfo | null> {
   const skipVersion = localStorage.getItem(STORAGE_KEY_SKIP_VERSION);
   const cached = readCache();
+  const now = Date.now();
 
-  // If a newer release is already known, surface it on every launch without
-  // another network call. The 24h throttle below only gates fetching, so a
-  // user who restarts the app right after a release still sees the banner.
-  if (
+  // The cache is fresh enough to trust without a network call.
+  const fetchDue =
+    !cached || now - cached.checkedAt >= CHECK_INTERVAL_MS;
+
+  const cachedBanner =
     cached &&
     isNewer(currentVersion, cached.version) &&
     skipVersion !== cached.version
-  ) {
-    return {
-      available: true,
-      currentVersion: normalizeVersion(currentVersion),
-      latestVersion: cached.version,
-      releaseUrl: cached.url,
-    };
-  }
+      ? {
+          available: true,
+          currentVersion: normalizeVersion(currentVersion),
+          latestVersion: cached.version,
+          releaseUrl: cached.url,
+        }
+      : null;
 
-  // Throttle the API call: max once per day
-  const now = Date.now();
-  const lastCheck = parseInt(
-    localStorage.getItem(STORAGE_KEY_LAST_CHECK) ?? '0',
-    10
-  );
-  if (now - lastCheck < CHECK_INTERVAL_MS) {
-    return null;
+  // A newer release we already know about, and the periodic refresh is not
+  // due yet — show it on every launch without fetching.
+  if (cachedBanner && !fetchDue) {
+    return cachedBanner;
   }
 
   try {
     const res = await fetch(GITHUB_API_URL, {
       headers: { Accept: 'application/vnd.github+json' },
     });
-    if (!res.ok) return null;
+    if (!res.ok) return cachedBanner;
 
     const data = await res.json();
     const latestVersion = normalizeVersion(data.tag_name ?? '');
     const releaseUrl = data.html_url ?? 'https://github.com/fedec65/omnimind/releases';
-
-    localStorage.setItem(STORAGE_KEY_LAST_CHECK, String(now));
 
     if (latestVersion) {
       localStorage.setItem(
@@ -127,7 +121,9 @@ export async function checkForUpdates(
       releaseUrl,
     };
   } catch {
-    return null;
+    // Offline or rate-limited: keep advertising the cached release rather
+    // than going silent.
+    return cachedBanner;
   }
 }
 
