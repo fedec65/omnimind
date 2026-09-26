@@ -234,6 +234,8 @@ jobs:
           # APPLE_SIGNING_IDENTITY is intentionally omitted: Tauri selects the
           # correct Developer ID certificate from the provided .p12 automatically,
           # avoiding mismatches between the certificate name and the identity string.
+          # Run AppImages without FUSE (linuxdeploy on headless CI runners).
+          APPIMAGE_EXTRACT_AND_RUN: '1'
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
