@@ -23,6 +23,13 @@
     latestVersion: string;
     releaseUrl: string;
   } | null>(null);
+  interface NativeUpdate {
+    version: string;
+    downloadAndInstall: () => Promise<void>;
+  }
+  let nativeUpdate = $state<NativeUpdate | null>(null);
+  let installingUpdate = $state(false);
+  let nativeUpdateError = $state(false);
 
   const PHASE_LABELS: Record<string, string> = {
     boot: 'Starting backend…',
@@ -55,17 +62,61 @@
       serverReady = true;
       if (health.version && !version) {
         version = health.version;
-        // Check for updates once we know the version
-        const update = await checkForUpdates(health.version);
-        if (update) {
-          updateInfo = {
-            latestVersion: update.latestVersion,
-            releaseUrl: update.releaseUrl,
-          };
+        // Prefer the native updater (signed, installs automatically). Fall
+        // back to the GitHub-release banner when it is unavailable (dev
+        // browser, or a build without the updater plugin).
+        const native = await checkNativeUpdate();
+        if (native) {
+          nativeUpdate = native;
+        } else {
+          const update = await checkForUpdates(health.version);
+          if (update) {
+            updateInfo = {
+              latestVersion: update.latestVersion,
+              releaseUrl: update.releaseUrl,
+            };
+          }
         }
       }
     } catch {
       serverReady = false;
+    }
+  }
+
+  async function checkNativeUpdate(): Promise<NativeUpdate | null> {
+    try {
+      const w = window as unknown as {
+        __TAURI__?: {
+          updater?: {
+            check: () => Promise<{
+              version: string;
+              downloadAndInstall: () => Promise<void>;
+            } | null>;
+          };
+        };
+      };
+      const update = await w.__TAURI__?.updater?.check?.();
+      return update ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  async function installNativeUpdate() {
+    if (!nativeUpdate) return;
+    installingUpdate = true;
+    nativeUpdateError = false;
+    try {
+      await nativeUpdate.downloadAndInstall();
+      const w = window as unknown as {
+        __TAURI__?: { process?: { relaunch: () => Promise<void> } };
+      };
+      await w.__TAURI__?.process?.relaunch?.();
+    } catch {
+      // Leave the banner up so the user can retry; fall back to the release
+      // page if the in-app install keeps failing.
+      nativeUpdateError = true;
+      installingUpdate = false;
     }
   }
 
@@ -77,14 +128,16 @@
   }
 
   async function openRelease() {
-    if (!updateInfo?.releaseUrl) return;
+    const url =
+      updateInfo?.releaseUrl ??
+      'https://github.com/fedec65/omnimind/releases/latest';
     try {
       // window.open is a no-op inside the Tauri webview — use the shell
       // plugin so the URL opens in the system browser.
-      await shellOpen(updateInfo.releaseUrl);
+      await shellOpen(url);
     } catch {
       // Fallback for dev in a plain browser
-      window.open(updateInfo.releaseUrl, '_blank');
+      window.open(url, '_blank');
     }
   }
 </script>
@@ -150,7 +203,21 @@
 
     <!-- Main content -->
     <main class="flex-1 flex flex-col min-w-0">
-      {#if updateInfo}
+      {#if nativeUpdate}
+        <div class="bg-[var(--accent-glow)] border-b border-[var(--accent)]/30 text-[var(--accent)] px-4 py-2 text-sm flex items-center justify-between shrink-0">
+          <span>Omnimind {nativeUpdate.version} is available</span>
+          <div class="flex items-center gap-3">
+            {#if nativeUpdateError}
+              <button class="hover:underline font-medium" onclick={installNativeUpdate}>Retry update</button>
+              <button class="hover:underline text-[var(--text-muted)]" onclick={openRelease}>Download manually</button>
+            {:else}
+              <button class="hover:underline font-medium disabled:opacity-50" disabled={installingUpdate} onclick={installNativeUpdate}>
+                {installingUpdate ? 'Installing…' : 'Update & Restart'}
+              </button>
+            {/if}
+          </div>
+        </div>
+      {:else if updateInfo}
         <div class="bg-[var(--accent-glow)] border-b border-[var(--accent)]/30 text-[var(--accent)] px-4 py-2 text-sm flex items-center justify-between shrink-0">
           <span>Omnimind {updateInfo.latestVersion} is available</span>
           <div class="flex items-center gap-3">

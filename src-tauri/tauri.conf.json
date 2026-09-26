@@ -37,7 +37,12 @@
           ],
           "permissions": [
             "core:default",
-            "shell:default"
+            "shell:default",
+            "updater:allow-check",
+            "updater:allow-download",
+            "updater:allow-install",
+            "updater:allow-download-and-install",
+            "process:allow-restart"
           ]
         }
       ]
@@ -64,6 +69,15 @@
     "longDescription": "A GUI that lets you see, explore, and manage your Omnimind memory visually.",
     "resources": {
       "resources": ""
+    }
+  },
+  "plugins": {
+    "updater": {
+      "active": true,
+      "endpoints": [
+        "https://github.com/fedec65/omnimind/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDFCQjYxNkQ5RDk3MTc1QjQKUldTMGRYSFoyUmEyRy9SVUVFdDR4bDF4WlFSUUQwakR6Sk1oL2p2TWJOV3d6NGhhdW03eGZDbm4K"
     }
   }
 }

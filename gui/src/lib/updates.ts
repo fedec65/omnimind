@@ -14,6 +14,13 @@ const GITHUB_API_URL =
 const CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000; // 1 day
 const STORAGE_KEY_LAST_CHECK = 'omnimind_update_last_check';
 const STORAGE_KEY_SKIP_VERSION = 'omnimind_update_skip_version';
+const STORAGE_KEY_LATEST = 'omnimind_update_latest';
+
+interface CachedLatest {
+  version: string;
+  url: string;
+  checkedAt: number;
+}
 
 function normalizeVersion(v: string): string {
   return v.replace(/^v/, '');
@@ -31,17 +38,52 @@ function isNewer(current: string, latest: string): boolean {
   return false;
 }
 
+function readCache(): CachedLatest | null {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_LATEST);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<CachedLatest>;
+    if (typeof parsed.version !== 'string' || typeof parsed.url !== 'string') {
+      return null;
+    }
+    return {
+      version: parsed.version,
+      url: parsed.url,
+      checkedAt: typeof parsed.checkedAt === 'number' ? parsed.checkedAt : 0,
+    };
+  } catch {
+    return null;
+  }
+}
+
 export async function checkForUpdates(
   currentVersion: string
 ): Promise<UpdateInfo | null> {
+  const skipVersion = localStorage.getItem(STORAGE_KEY_SKIP_VERSION);
+  const cached = readCache();
+
+  // If a newer release is already known, surface it on every launch without
+  // another network call. The 24h throttle below only gates fetching, so a
+  // user who restarts the app right after a release still sees the banner.
+  if (
+    cached &&
+    isNewer(currentVersion, cached.version) &&
+    skipVersion !== cached.version
+  ) {
+    return {
+      available: true,
+      currentVersion: normalizeVersion(currentVersion),
+      latestVersion: cached.version,
+      releaseUrl: cached.url,
+    };
+  }
+
+  // Throttle the API call: max once per day
   const now = Date.now();
   const lastCheck = parseInt(
     localStorage.getItem(STORAGE_KEY_LAST_CHECK) ?? '0',
     10
   );
-  const skipVersion = localStorage.getItem(STORAGE_KEY_SKIP_VERSION);
-
-  // Throttle: max once per day
   if (now - lastCheck < CHECK_INTERVAL_MS) {
     return null;
   }
@@ -57,6 +99,17 @@ export async function checkForUpdates(
     const releaseUrl = data.html_url ?? 'https://github.com/fedec65/omnimind/releases';
 
     localStorage.setItem(STORAGE_KEY_LAST_CHECK, String(now));
+
+    if (latestVersion) {
+      localStorage.setItem(
+        STORAGE_KEY_LATEST,
+        JSON.stringify({
+          version: latestVersion,
+          url: releaseUrl,
+          checkedAt: now,
+        } satisfies CachedLatest)
+      );
+    }
 
     if (!latestVersion || !isNewer(currentVersion, latestVersion)) {
       return null;

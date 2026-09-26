@@ -35,7 +35,7 @@ jobs:
             target: x86_64-apple-darwin
             node_platform: 'darwin-x64'
           - platform: 'ubuntu-22.04'
-            args: '--bundles deb'
+            args: '--bundles deb appimage'
             target: x86_64-unknown-linux-gnu
             node_platform: 'linux-x64'
           - platform: 'windows-latest'
@@ -226,6 +226,9 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Updater signing key: produces signed bundles and the latest.json
+          # manifest the in-app updater polls for new releases.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           # macOS code signing + notarization secrets.
           # If these are absent, the build falls back to unsigned bundles.
           # APPLE_SIGNING_IDENTITY is intentionally omitted: Tauri selects the
@@ -250,6 +253,8 @@ jobs:
             On first launch, the app creates its data directory and initializes the database automatically.
           releaseDraft: ${{ inputs.draft || 'true' }}
           prerelease: false
+          # Merge and attach the updater manifest (latest.json) to the release.
+          includeUpdaterJson: true
           args: ${{ matrix.args }}
 
       - name: Verify macOS signing and notarization
