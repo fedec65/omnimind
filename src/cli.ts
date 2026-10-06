@@ -141,9 +141,13 @@ Commands:
                           (multilingual model, persisted for future runs)
 
   setup                   Register the Omnimind MCP server in AI clients
-    --client <id>         claude-code | cursor | claude-desktop | kimi
-                          (default: all detected clients)
+    --client <id>         One of: claude-code, cursor, claude-desktop, kimi,
+                          codex, vscode, continue
+                          (default: all detected supported clients)
     --dry-run             Print what would be written, touch nothing
+
+                          Tracked but not supported yet (use --client <id>):
+                            deepseek, zai, grok, muse
 
   bus status              Show connected tools and subscriptions
   bus sync [tool-id]      Pull updates from specific tool
@@ -606,9 +610,18 @@ Shared memory server commands:
 async function setupCommand(args: string[]): Promise<void> {
   const clientFlag = parseFlag(args, '--client');
   const supportedIds = MCP_CLIENTS.filter((c) => c.supported).map((c) => c.id);
-  if (clientFlag !== null && !supportedIds.includes(clientFlag as McpClientId)) {
-    console.error(`Error: invalid --client '${clientFlag}' (expected: ${supportedIds.join(' | ')})`);
-    process.exit(1);
+  if (clientFlag !== null) {
+    const client = MCP_CLIENTS.find((c) => c.id === clientFlag);
+    if (client === undefined) {
+      console.error(`Error: invalid --client '${clientFlag}' (expected: ${supportedIds.join(' | ')})`);
+      process.exit(1);
+    }
+    if (!client.supported) {
+      const note = client.notes ? ` — ${client.notes}` : '';
+      const link = client.trackingUrl ? `\n  Track: ${client.trackingUrl}` : '';
+      console.log(`Skipping ${client.name}: not supported yet.${note}${link}`);
+      return;
+    }
   }
 
   try {
