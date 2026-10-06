@@ -120,6 +120,13 @@ export const MCP_CLIENTS: readonly McpClient[] = [
     supported: true,
   },
   {
+    id: 'continue' as McpClient['id'],
+    name: 'Continue',
+    configPath: (home) => join(home, '.continue', 'config.json'),
+    detectPaths: (home) => [join(home, '.continue')],
+    supported: true,
+  },
+  {
     id: 'deepseek' as McpClient['id'],
     name: 'DeepSeek',
     configPath: () => '',

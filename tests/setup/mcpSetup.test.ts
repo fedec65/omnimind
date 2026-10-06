@@ -375,3 +375,34 @@ describe('vscode paths', () => {
     expect(cfg.mcpServers.omnimind).toEqual(buildEntry());
   });
 });
+
+describe('continue registration', () => {
+  it('writes the entry to ~/.continue/config.json', () => {
+    runSetup({ home, clients: ['continue'], out });
+    const path = join(home, '.continue', 'config.json');
+    const cfg = JSON.parse(readFileSync(path, 'utf8'));
+    expect(cfg.mcpServers.omnimind).toEqual(buildEntry());
+  });
+
+  it('is idempotent', () => {
+    runSetup({ home, clients: ['continue'], out });
+    const first = readFileSync(join(home, '.continue', 'config.json'), 'utf8');
+    runSetup({ home, clients: ['continue'], out });
+    const second = readFileSync(join(home, '.continue', 'config.json'), 'utf8');
+    expect(first).toBe(second);
+  });
+
+  it('preserves an existing config and other mcpServers entries', () => {
+    const dir = join(home, '.continue');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, 'config.json'),
+      JSON.stringify({ models: [{ provider: 'openai' }], mcpServers: { other: { command: 'x', args: [] } } }),
+    );
+    runSetup({ home, clients: ['continue'], out });
+    const cfg = JSON.parse(readFileSync(join(dir, 'config.json'), 'utf8'));
+    expect(cfg.models[0].provider).toBe('openai');
+    expect(cfg.mcpServers.other).toEqual({ command: 'x', args: [] });
+    expect(cfg.mcpServers.omnimind).toEqual(buildEntry());
+  });
+});
