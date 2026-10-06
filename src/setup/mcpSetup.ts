@@ -32,7 +32,18 @@ import {
   type TomlConfig,
 } from './tomlWriter.js';
 
-export type McpClientId = 'claude-code' | 'cursor' | 'claude-desktop' | 'kimi';
+export type McpClientId =
+  | 'claude-code'
+  | 'cursor'
+  | 'claude-desktop'
+  | 'kimi'
+  | 'codex'
+  | 'vscode'
+  | 'continue'
+  | 'deepseek'
+  | 'zai'
+  | 'grok'
+  | 'muse';
 
 export interface McpServerEntry {
   command: string;
@@ -106,28 +117,28 @@ export const MCP_CLIENTS: readonly McpClient[] = [
     supported: true,
   },
   {
-    id: 'codex' as McpClient['id'],
+    id: 'codex',
     name: 'OpenAI Codex CLI',
     configPath: (home) => join(home, '.codex', 'config.toml'),
     detectPaths: (home) => [join(home, '.codex')],
     supported: true,
   },
   {
-    id: 'vscode' as McpClient['id'],
+    id: 'vscode',
     name: 'VS Code (Copilot)',
     configPath: (home, platform) => join(vscodeUserDir(home, platform), 'User', 'mcp.json'),
     detectPaths: (home, platform) => [join(vscodeUserDir(home, platform), 'User', 'mcp.json')],
     supported: true,
   },
   {
-    id: 'continue' as McpClient['id'],
+    id: 'continue',
     name: 'Continue',
     configPath: (home) => join(home, '.continue', 'config.json'),
     detectPaths: (home) => [join(home, '.continue')],
     supported: true,
   },
   {
-    id: 'deepseek' as McpClient['id'],
+    id: 'deepseek',
     name: 'DeepSeek',
     configPath: () => '',
     detectPaths: () => [],
@@ -136,7 +147,7 @@ export const MCP_CLIENTS: readonly McpClient[] = [
     trackingUrl: 'https://github.com/MoonshotAI/omnimind/issues?q=is%3Aissue+deepseek',
   },
   {
-    id: 'zai' as McpClient['id'],
+    id: 'zai',
     name: 'Z.ai (GLM)',
     configPath: () => '',
     detectPaths: () => [],
@@ -145,7 +156,7 @@ export const MCP_CLIENTS: readonly McpClient[] = [
     trackingUrl: 'https://github.com/MoonshotAI/omnimind/issues?q=is%3Aissue+z.ai',
   },
   {
-    id: 'grok' as McpClient['id'],
+    id: 'grok',
     name: 'xAI Grok',
     configPath: () => '',
     detectPaths: () => [],
@@ -154,7 +165,7 @@ export const MCP_CLIENTS: readonly McpClient[] = [
     trackingUrl: 'https://github.com/MoonshotAI/omnimind/issues?q=is%3Aissue+grok',
   },
   {
-    id: 'muse' as McpClient['id'],
+    id: 'muse',
     name: 'Muse',
     configPath: () => '',
     detectPaths: () => [],
@@ -228,7 +239,7 @@ export function isClientConfigured(
   const targets = writeTargetsFor(client, home, platform);
   return targets.some((path) => {
     if (!existsSync(path)) return false;
-    if ((client.id as string) === 'codex') {
+    if (client.id === 'codex') {
       const result = readTomlConfig(path);
       if (!result.ok) return false;
       const servers = (result.value.mcp_servers as Record<string, McpServerEntry> | undefined) ?? {};
@@ -308,7 +319,7 @@ export function runSetup(opts: SetupOptions = {}): SetupResult[] {
     const targets = writeTargetsFor(client, home, platform);
     for (const path of targets) {
       if (dryRun) {
-        if ((client.id as string) === 'codex') {
+        if (client.id === 'codex') {
           out.write(`[dry-run] Would write to ${path}:\n`);
         } else {
           const existing = existsSync(path) ? readFileSync(path, 'utf8') : '';
@@ -319,7 +330,7 @@ export function runSetup(opts: SetupOptions = {}): SetupResult[] {
         continue;
       }
 
-      if ((client.id as string) === 'codex') {
+      if (client.id === 'codex') {
         const readResult = readTomlConfig(path);
         const baseToml: TomlConfig = readResult.ok ? readResult.value : {};
         const next = ensureTomlMcpServer(baseToml, 'omnimind', entry);

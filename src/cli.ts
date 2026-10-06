@@ -24,7 +24,7 @@
 
 import { Omnimind, resolveGitBranch } from './index.js';
 import { rebuildGraph } from './core/GraphRebuilder.js';
-import { runSetup, type McpClientId } from './setup/mcpSetup.js';
+import { runSetup, MCP_CLIENTS, type McpClientId } from './setup/mcpSetup.js';
 import { llmErrorMessage } from './core/llm/index.js';
 import { parseLlmEnableArgs } from './cli/llmFlags.js';
 import { homedir } from 'os';
@@ -605,9 +605,9 @@ Shared memory server commands:
 
 async function setupCommand(args: string[]): Promise<void> {
   const clientFlag = parseFlag(args, '--client');
-  const validClients: readonly McpClientId[] = ['claude-code', 'cursor', 'claude-desktop', 'kimi'];
-  if (clientFlag !== null && !validClients.includes(clientFlag as McpClientId)) {
-    console.error(`Error: invalid --client '${clientFlag}' (expected: ${validClients.join(' | ')})`);
+  const supportedIds = MCP_CLIENTS.filter((c) => c.supported).map((c) => c.id);
+  if (clientFlag !== null && !supportedIds.includes(clientFlag as McpClientId)) {
+    console.error(`Error: invalid --client '${clientFlag}' (expected: ${supportedIds.join(' | ')})`);
     process.exit(1);
   }
 

@@ -21,6 +21,7 @@ import {
   runSetup,
   getClient,
   MCP_CLIENTS,
+  type McpClientId,
   type McpServerEntry,
 } from '../../src/setup/mcpSetup.js';
 
@@ -404,5 +405,29 @@ describe('continue registration', () => {
     expect(cfg.models[0].provider).toBe('openai');
     expect(cfg.mcpServers.other).toEqual({ command: 'x', args: [] });
     expect(cfg.mcpServers.omnimind).toEqual(buildEntry());
+  });
+});
+
+describe('McpClientId union widening', () => {
+  it('every registered id is a valid McpClientId', () => {
+    for (const c of MCP_CLIENTS) {
+      const id: McpClientId = c.id;
+      expect(id).toBe(c.id);
+    }
+  });
+
+  it('unsupported ids are valid McpClientId values (for honest signaling)', () => {
+    const ids: McpClientId[] = ['deepseek', 'zai', 'grok', 'muse'];
+    for (const id of ids) {
+      const c = MCP_CLIENTS.find((x) => x.id === id);
+      expect(c).toBeDefined();
+    }
+  });
+
+  it('getClient returns the right entry for each id', () => {
+    for (const id of ['claude-code', 'cursor', 'claude-desktop', 'kimi', 'codex', 'vscode', 'continue', 'deepseek', 'zai', 'grok', 'muse'] as const) {
+      const c = getClient(id);
+      expect(c.id).toBe(id);
+    }
   });
 });
