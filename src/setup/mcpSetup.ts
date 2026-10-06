@@ -70,6 +70,12 @@ const claudeDesktopDir = (home: string, platform: NodeJS.Platform): string => {
   return join(home, '.config', 'Claude');
 };
 
+const vscodeUserDir = (home: string, platform: NodeJS.Platform): string => {
+  if (platform === 'darwin') return join(home, 'Library', 'Application Support', 'Code');
+  if (platform === 'win32') return join(home, 'AppData', 'Roaming', 'Code');
+  return join(home, '.config', 'Code');
+};
+
 export const MCP_CLIENTS: readonly McpClient[] = [
   {
     id: 'claude-code',
@@ -104,6 +110,13 @@ export const MCP_CLIENTS: readonly McpClient[] = [
     name: 'OpenAI Codex CLI',
     configPath: (home) => join(home, '.codex', 'config.toml'),
     detectPaths: (home) => [join(home, '.codex')],
+    supported: true,
+  },
+  {
+    id: 'vscode' as McpClient['id'],
+    name: 'VS Code (Copilot)',
+    configPath: (home, platform) => join(vscodeUserDir(home, platform), 'User', 'mcp.json'),
+    detectPaths: (home, platform) => [join(vscodeUserDir(home, platform), 'User', 'mcp.json')],
     supported: true,
   },
   {

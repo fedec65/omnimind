@@ -346,3 +346,32 @@ describe('codex registration', () => {
     expect(mode).toBe(0o600);
   });
 });
+
+describe('vscode paths', () => {
+  const vscode = MCP_CLIENTS.find((c) => c.id === 'vscode')!;
+
+  it('macOS path is ~/Library/Application Support/Code/User/mcp.json', () => {
+    expect(vscode.configPath('/h', 'darwin')).toBe('/h/Library/Application Support/Code/User/mcp.json');
+  });
+
+  it('Linux path is ~/.config/Code/User/mcp.json', () => {
+    expect(vscode.configPath('/h', 'linux')).toBe('/h/.config/Code/User/mcp.json');
+  });
+
+  it('Windows path is %APPDATA%/Code/User/mcp.json', () => {
+    expect(vscode.configPath('/h', 'win32')).toBe('/h/AppData/Roaming/Code/User/mcp.json');
+  });
+
+  it('detectPaths returns the same per-OS path', () => {
+    expect(vscode.detectPaths('/h', 'darwin')).toEqual(['/h/Library/Application Support/Code/User/mcp.json']);
+    expect(vscode.detectPaths('/h', 'linux')).toEqual(['/h/.config/Code/User/mcp.json']);
+    expect(vscode.detectPaths('/h', 'win32')).toEqual(['/h/AppData/Roaming/Code/User/mcp.json']);
+  });
+
+  it('writes the entry on detection', () => {
+    runSetup({ home, clients: ['vscode'], out, platform: 'linux' });
+    const path = join(home, '.config', 'Code', 'User', 'mcp.json');
+    const cfg = JSON.parse(readFileSync(path, 'utf8'));
+    expect(cfg.mcpServers.omnimind).toEqual(buildEntry());
+  });
+});
