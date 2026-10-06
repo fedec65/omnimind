@@ -252,3 +252,46 @@ describe('unsupported client entries', () => {
     }
   });
 });
+
+describe('claude-code dual-write', () => {
+  it('writes both ~/.claude.json and ~/.claude/settings.json', () => {
+    const results = runSetup({ home, clients: ['claude-code'], out });
+    expect(results).toHaveLength(1);
+    const userScope = readFileSync(join(home, '.claude.json'), 'utf8');
+    const projectScope = readFileSync(join(home, '.claude', 'settings.json'), 'utf8');
+    expect(JSON.parse(userScope).mcpServers.omnimind).toEqual(buildEntry());
+    expect(JSON.parse(projectScope).mcpServers.omnimind).toEqual(buildEntry());
+  });
+
+  it('is idempotent: running twice writes the same content', () => {
+    runSetup({ home, clients: ['claude-code'], out });
+    const firstUser = readFileSync(join(home, '.claude.json'), 'utf8');
+    const firstProject = readFileSync(join(home, '.claude', 'settings.json'), 'utf8');
+    runSetup({ home, clients: ['claude-code'], out });
+    const secondUser = readFileSync(join(home, '.claude.json'), 'utf8');
+    const secondProject = readFileSync(join(home, '.claude', 'settings.json'), 'utf8');
+    expect(firstUser).toBe(secondUser);
+    expect(firstProject).toBe(secondProject);
+  });
+
+  it('detects Claude Code via ~/.claude.json alone', () => {
+    writeFileSync(join(home, '.claude.json'), '{"mcpServers":{}}');
+    const detected = detectClients(home, 'darwin').map((c) => c.id);
+    expect(detected).toContain('claude-code');
+  });
+
+  it('isClientConfigured is true when only ~/.claude.json has the entry', () => {
+    mkdirSync(join(home, '.claude'), { recursive: true });
+    writeFileSync(
+      join(home, '.claude.json'),
+      JSON.stringify({ mcpServers: { omnimind: buildEntry() } }),
+    );
+    expect(isClientConfigured(getClient('claude-code'), home, 'darwin')).toBe(true);
+  });
+
+  it('both files are written with 0o600 mode', () => {
+    runSetup({ home, clients: ['claude-code'], out });
+    expect(statSync(join(home, '.claude.json')).mode & 0o777).toBe(0o600);
+    expect(statSync(join(home, '.claude', 'settings.json')).mode & 0o777).toBe(0o600);
+  });
+});

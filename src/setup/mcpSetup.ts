@@ -68,8 +68,8 @@ export const MCP_CLIENTS: readonly McpClient[] = [
   {
     id: 'claude-code',
     name: 'Claude Code',
-    configPath: (home) => join(home, '.claude', 'settings.json'),
-    detectPaths: (home) => [join(home, '.claude')],
+    configPath: (home) => join(home, '.claude.json'),
+    detectPaths: (home) => [join(home, '.claude'), join(home, '.claude.json')],
     supported: true,
   },
   {
@@ -186,16 +186,18 @@ export function detectClients(
   });
 }
 
-/** Whether the client's config already contains the Omnimind MCP entry */
+/** Whether any of the client's config targets already contains the Omnimind MCP entry */
 export function isClientConfigured(
   client: McpClient,
   home: string = homedir(),
   platform: NodeJS.Platform = process.platform,
 ): boolean {
-  const path = client.configPath(home, platform);
-  if (!existsSync(path)) return false;
-  const config = parseConfig(readFileSync(path, 'utf8'));
-  return config.mcpServers?.omnimind !== undefined;
+  const targets = writeTargetsFor(client, home, platform);
+  return targets.some((path) => {
+    if (!existsSync(path)) return false;
+    const config = parseConfig(readFileSync(path, 'utf8'));
+    return config.mcpServers?.omnimind !== undefined;
+  });
 }
 
 export interface ClientStatus {
@@ -264,22 +266,45 @@ export function runSetup(opts: SetupOptions = {}): SetupResult[] {
 
   const results: SetupResult[] = [];
   for (const client of selected) {
-    const path = client.configPath(home, platform);
-    const existing = existsSync(path) ? readFileSync(path, 'utf8') : '';
-    const merged = mergeMcpServers(parseConfig(existing), entry);
-    const serialized = JSON.stringify(merged, null, 2) + '\n';
+    const targets = writeTargetsFor(client, home, platform);
+    for (const path of targets) {
+      const existing = existsSync(path) ? readFileSync(path, 'utf8') : '';
+      const merged = mergeMcpServers(parseConfig(existing), entry);
+      const serialized = JSON.stringify(merged, null, 2) + '\n';
 
-    if (dryRun) {
-      out.write(`[dry-run] Would write to ${path}:\n${serialized}\n`);
-    } else {
-      mkdirSync(dirname(path), { recursive: true });
-      const tmpPath = `${path}.omnimind.tmp`;
-      writeFileSync(tmpPath, serialized, { mode: 0o600 });
-      renameSync(tmpPath, path);
-      chmodSync(path, 0o600);
-      out.write(`Registered Omnimind MCP server in ${client.name} (${path})\n`);
+      if (dryRun) {
+        out.write(`[dry-run] Would write to ${path}:\n${serialized}\n`);
+      } else {
+        mkdirSync(dirname(path), { recursive: true });
+        const tmpPath = `${path}.omnimind.tmp`;
+        writeFileSync(tmpPath, serialized, { mode: 0o600 });
+        renameSync(tmpPath, path);
+        chmodSync(path, 0o600);
+        out.write(`Registered Omnimind MCP server in ${client.name} (${path})\n`);
+      }
     }
-    results.push({ client, path, dryRun });
+    results.push({ client, path: targets[0]!, dryRun });
   }
   return results;
+}
+
+/**
+ * The list of files to write for a given client. Single-file clients
+ * (cursor, kimi, claude-desktop, …) have one target. Claude Code
+ * dual-writes to its user-scope AND project-scope configs so installs
+ * work whether the user is in a project with a .claude/settings.json or
+ * running Claude Code user-scope.
+ */
+function writeTargetsFor(
+  client: McpClient,
+  home: string,
+  platform: NodeJS.Platform,
+): string[] {
+  if (client.id === 'claude-code') {
+    return [
+      client.configPath(home, platform),                  // ~/.claude.json
+      join(home, '.claude', 'settings.json'),              // project-scope fallback
+    ];
+  }
+  return [client.configPath(home, platform)];
 }
