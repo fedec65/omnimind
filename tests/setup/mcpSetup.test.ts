@@ -9,6 +9,7 @@ import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync, existsSync
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { Writable } from 'node:stream';
+import { parse as parseToml } from 'smol-toml';
 import {
   buildEntry,
   buildExplicitEntry,
@@ -20,6 +21,7 @@ import {
   runSetup,
   getClient,
   MCP_CLIENTS,
+  type McpServerEntry,
 } from '../../src/setup/mcpSetup.js';
 
 let home: string;
@@ -293,5 +295,54 @@ describe('claude-code dual-write', () => {
     runSetup({ home, clients: ['claude-code'], out });
     expect(statSync(join(home, '.claude.json')).mode & 0o777).toBe(0o600);
     expect(statSync(join(home, '.claude', 'settings.json')).mode & 0o777).toBe(0o600);
+  });
+});
+
+describe('codex registration', () => {
+  it('writes a [mcp_servers.omnimind] sub-table to ~/.codex/config.toml', () => {
+    const results = runSetup({ home, clients: ['codex'], out });
+    expect(results).toHaveLength(1);
+    const path = join(home, '.codex', 'config.toml');
+    expect(existsSync(path)).toBe(true);
+    // Re-read with smol-toml to assert shape
+    const parsed = parseToml(readFileSync(path, 'utf8')) as { mcp_servers: Record<string, McpServerEntry> };
+    expect(parsed.mcp_servers.omnimind).toEqual(buildEntry());
+  });
+
+  it('is idempotent: re-running yields an equivalent mcp_servers block', () => {
+    runSetup({ home, clients: ['codex'], out });
+    const first = readFileSync(join(home, '.codex', 'config.toml'), 'utf8');
+    runSetup({ home, clients: ['codex'], out });
+    const second = readFileSync(join(home, '.codex', 'config.toml'), 'utf8');
+    expect(first).toBe(second);
+  });
+
+  it('preserves an existing Codex config and other mcp_servers entries', () => {
+    const codexDir = join(home, '.codex');
+    mkdirSync(codexDir, { recursive: true });
+    const existing = [
+      'model = "gpt-5"',
+      '',
+      '[mcp_servers.other]',
+      'command = "x"',
+      'args = ["--flag"]',
+      '',
+    ].join('\n');
+    writeFileSync(join(codexDir, 'config.toml'), existing);
+
+    runSetup({ home, clients: ['codex'], out });
+    const parsed = parseToml(readFileSync(join(codexDir, 'config.toml'), 'utf8')) as {
+      model: string;
+      mcp_servers: Record<string, McpServerEntry>;
+    };
+    expect(parsed.model).toBe('gpt-5');
+    expect(parsed.mcp_servers.other).toEqual({ command: 'x', args: ['--flag'] });
+    expect(parsed.mcp_servers.omnimind).toEqual(buildEntry());
+  });
+
+  it('writes with 0o600 mode', () => {
+    runSetup({ home, clients: ['codex'], out });
+    const mode = statSync(join(home, '.codex', 'config.toml')).mode & 0o777;
+    expect(mode).toBe(0o600);
   });
 });

@@ -2,9 +2,9 @@
  * mcpSetup — idempotent MCP client registration for Omnimind.
  *
  * Generalizes the `setup-claude-code` script to all supported clients:
- * claude-code, cursor, claude-desktop, kimi. Auto-detects which clients
- * are installed and writes the Omnimind MCP server entry into each
- * client's config file.
+ * claude-code, cursor, claude-desktop, kimi, codex. Auto-detects which
+ * clients are installed and writes the Omnimind MCP server entry into
+ * each client's config file.
  *
  * Design choices (same as setup-claude-code):
  * - Pure functions exported for testability (homedir injectable).
@@ -25,6 +25,12 @@ import {
 } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
+import {
+  readTomlConfig,
+  writeTomlConfig,
+  ensureMcpServer as ensureTomlMcpServer,
+  type TomlConfig,
+} from './tomlWriter.js';
 
 export type McpClientId = 'claude-code' | 'cursor' | 'claude-desktop' | 'kimi';
 
@@ -91,6 +97,13 @@ export const MCP_CLIENTS: readonly McpClient[] = [
     name: 'Kimi Code',
     configPath: (home) => join(home, '.kimi-code', 'mcp.json'),
     detectPaths: (home) => [join(home, '.kimi-code')],
+    supported: true,
+  },
+  {
+    id: 'codex' as McpClient['id'],
+    name: 'OpenAI Codex CLI',
+    configPath: (home) => join(home, '.codex', 'config.toml'),
+    detectPaths: (home) => [join(home, '.codex')],
     supported: true,
   },
   {
@@ -195,6 +208,12 @@ export function isClientConfigured(
   const targets = writeTargetsFor(client, home, platform);
   return targets.some((path) => {
     if (!existsSync(path)) return false;
+    if ((client.id as string) === 'codex') {
+      const result = readTomlConfig(path);
+      if (!result.ok) return false;
+      const servers = (result.value.mcp_servers as Record<string, McpServerEntry> | undefined) ?? {};
+      return servers.omnimind !== undefined;
+    }
     const config = parseConfig(readFileSync(path, 'utf8'));
     return config.mcpServers?.omnimind !== undefined;
   });
@@ -260,7 +279,7 @@ export function runSetup(opts: SetupOptions = {}): SetupResult[] {
 
   if (selected.length === 0) {
     throw new Error(
-      'No supported MCP clients detected. Use --client <claude-code|cursor|claude-desktop|kimi> to configure one explicitly.',
+      'No supported MCP clients detected. Use --client <claude-code|cursor|claude-desktop|kimi|codex> to configure one explicitly.',
     );
   }
 
@@ -268,20 +287,39 @@ export function runSetup(opts: SetupOptions = {}): SetupResult[] {
   for (const client of selected) {
     const targets = writeTargetsFor(client, home, platform);
     for (const path of targets) {
+      if (dryRun) {
+        if ((client.id as string) === 'codex') {
+          out.write(`[dry-run] Would write to ${path}:\n`);
+        } else {
+          const existing = existsSync(path) ? readFileSync(path, 'utf8') : '';
+          const merged = mergeMcpServers(parseConfig(existing), entry);
+          const serialized = JSON.stringify(merged, null, 2) + '\n';
+          out.write(`[dry-run] Would write to ${path}:\n${serialized}\n`);
+        }
+        continue;
+      }
+
+      if ((client.id as string) === 'codex') {
+        const readResult = readTomlConfig(path);
+        const baseToml: TomlConfig = readResult.ok ? readResult.value : {};
+        const next = ensureTomlMcpServer(baseToml, 'omnimind', entry);
+        const writeResult = writeTomlConfig(path, next);
+        if (!writeResult.ok) {
+          throw new Error(`Failed to write ${path}: ${writeResult.error.message}`);
+        }
+        out.write(`Registered Omnimind MCP server in ${client.name} (${path})\n`);
+        continue;
+      }
+
       const existing = existsSync(path) ? readFileSync(path, 'utf8') : '';
       const merged = mergeMcpServers(parseConfig(existing), entry);
       const serialized = JSON.stringify(merged, null, 2) + '\n';
-
-      if (dryRun) {
-        out.write(`[dry-run] Would write to ${path}:\n${serialized}\n`);
-      } else {
-        mkdirSync(dirname(path), { recursive: true });
-        const tmpPath = `${path}.omnimind.tmp`;
-        writeFileSync(tmpPath, serialized, { mode: 0o600 });
-        renameSync(tmpPath, path);
-        chmodSync(path, 0o600);
-        out.write(`Registered Omnimind MCP server in ${client.name} (${path})\n`);
-      }
+      mkdirSync(dirname(path), { recursive: true });
+      const tmpPath = `${path}.omnimind.tmp`;
+      writeFileSync(tmpPath, serialized, { mode: 0o600 });
+      renameSync(tmpPath, path);
+      chmodSync(path, 0o600);
+      out.write(`Registered Omnimind MCP server in ${client.name} (${path})\n`);
     }
     results.push({ client, path: targets[0]!, dryRun });
   }
