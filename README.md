@@ -157,6 +157,20 @@ npm run gui:dev
 | `bus conflicts` | List unresolved conflicts |
 | `wipe --yes-i-am-sure` | Delete all memories (irreversible) |
 
+### Optional: Local LLM (Ollama / LM Studio) — off by default
+
+Omnimind can plug into a **local** LLM server (Ollama or LM Studio) for an
+opt-in **summarization** tool. It is 100% local and **off by default** — fresh
+installs never make LLM requests.
+
+- Enable from the **Settings → Local LLM** card (GUI) or the CLI:
+  `omnimind config llm enable --provider ollama --model qwen2.5:3b`
+- Only the local model is used; the UI refuses any non-loopback URL.
+- Summarize text with the MCP tool `omnimind_summarize` or the CLI
+  `omnimind summarize "text"`.
+- The model must already be running locally; Omnimind never pulls or
+  downloads models.
+
 ### Encryption
 
 Enable AES-256-GCM encryption with a passphrase:
