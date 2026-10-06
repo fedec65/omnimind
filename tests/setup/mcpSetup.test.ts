@@ -47,6 +47,23 @@ describe('buildEntry', () => {
   });
 });
 
+describe('McpClient interface', () => {
+  it('every registered client exposes a supported flag', () => {
+    for (const c of MCP_CLIENTS) {
+      expect(typeof c.supported).toBe('boolean');
+    }
+  });
+
+  it('existing four clients are supported by default and carry no notes/trackingUrl', () => {
+    for (const id of ['claude-code', 'cursor', 'claude-desktop', 'kimi'] as const) {
+      const c = MCP_CLIENTS.find((x) => x.id === id)!;
+      expect(c.supported).toBe(true);
+      expect(c.notes).toBeUndefined();
+      expect(c.trackingUrl).toBeUndefined();
+    }
+  });
+});
+
 describe('parseConfig', () => {
   it('parses valid JSON', () => {
     expect(parseConfig('{"a":1}')).toEqual({ a: 1 });

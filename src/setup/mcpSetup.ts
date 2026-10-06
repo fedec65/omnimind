@@ -46,6 +46,16 @@ export interface McpClient {
   readonly configPath: (home: string, platform: NodeJS.Platform) => string;
   /** Paths whose existence indicates the client is installed */
   readonly detectPaths: (home: string, platform: NodeJS.Platform) => string[];
+  /**
+   * Whether this client is supported by Omnimind's MCP registration flow.
+   * `false` entries appear in the registry for honest signaling (the user
+   * searched for them) but are never auto-detected and never written to.
+   */
+  readonly supported: boolean;
+  /** Human-readable explanation shown in the GUI when `supported` is false. */
+  readonly notes?: string | undefined;
+  /** Link to a tracking issue shown alongside unsupported entries. */
+  readonly trackingUrl?: string | undefined;
 }
 
 const claudeDesktopDir = (home: string, platform: NodeJS.Platform): string => {
@@ -60,24 +70,28 @@ export const MCP_CLIENTS: readonly McpClient[] = [
     name: 'Claude Code',
     configPath: (home) => join(home, '.claude', 'settings.json'),
     detectPaths: (home) => [join(home, '.claude')],
+    supported: true,
   },
   {
     id: 'cursor',
     name: 'Cursor',
     configPath: (home) => join(home, '.cursor', 'mcp.json'),
     detectPaths: (home) => [join(home, '.cursor')],
+    supported: true,
   },
   {
     id: 'claude-desktop',
     name: 'Claude Desktop',
     configPath: (home, platform) => join(claudeDesktopDir(home, platform), 'claude_desktop_config.json'),
     detectPaths: (home, platform) => [claudeDesktopDir(home, platform)],
+    supported: true,
   },
   {
     id: 'kimi',
     name: 'Kimi Code',
     configPath: (home) => join(home, '.kimi-code', 'mcp.json'),
     detectPaths: (home) => [join(home, '.kimi-code')],
+    supported: true,
   },
 ] as const;
 
