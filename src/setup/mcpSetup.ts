@@ -93,6 +93,42 @@ export const MCP_CLIENTS: readonly McpClient[] = [
     detectPaths: (home) => [join(home, '.kimi-code')],
     supported: true,
   },
+  {
+    id: 'deepseek' as McpClient['id'],
+    name: 'DeepSeek',
+    configPath: () => '',
+    detectPaths: () => [],
+    supported: false,
+    notes: 'DeepSeek does not provide a local MCP client or desktop app with a config file.',
+    trackingUrl: 'https://github.com/MoonshotAI/omnimind/issues?q=is%3Aissue+deepseek',
+  },
+  {
+    id: 'zai' as McpClient['id'],
+    name: 'Z.ai (GLM)',
+    configPath: () => '',
+    detectPaths: () => [],
+    supported: false,
+    notes: 'Z.ai is a model subscription. Point Claude Code, Cline, or other MCP hosts at it instead.',
+    trackingUrl: 'https://github.com/MoonshotAI/omnimind/issues?q=is%3Aissue+z.ai',
+  },
+  {
+    id: 'grok' as McpClient['id'],
+    name: 'xAI Grok',
+    configPath: () => '',
+    detectPaths: () => [],
+    supported: false,
+    notes: 'xAI Grok has no public MCP host or coding CLI as of 2026-10-05.',
+    trackingUrl: 'https://github.com/MoonshotAI/omnimind/issues?q=is%3Aissue+grok',
+  },
+  {
+    id: 'muse' as McpClient['id'],
+    name: 'Muse',
+    configPath: () => '',
+    detectPaths: () => [],
+    supported: false,
+    notes: 'No "Muse" product with an MCP host is publicly available.',
+    trackingUrl: 'https://github.com/MoonshotAI/omnimind/issues?q=is%3Aissue+muse',
+  },
 ] as const;
 
 export function getClient(id: McpClientId): McpClient {

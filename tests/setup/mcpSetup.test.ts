@@ -219,3 +219,36 @@ describe('getClientsStatus', () => {
     expect(byId.get('claude-desktop')?.configPath).toContain('Library/Application Support/Claude');
   });
 });
+
+describe('unsupported client entries', () => {
+  const UNSUPPORTED_IDS = ['deepseek', 'zai', 'grok', 'muse'] as const;
+
+  it('registers deepseek, zai, grok, muse with supported=false', () => {
+    for (const id of UNSUPPORTED_IDS) {
+      const c = MCP_CLIENTS.find((x) => x.id === id);
+      expect(c, `missing entry for ${id}`).toBeDefined();
+      expect(c!.supported).toBe(false);
+      expect(c!.notes).toMatch(/.+/);
+      expect(c!.trackingUrl).toMatch(/^https?:\/\//);
+    }
+  });
+
+  it('unsupported entries are excluded from detectClients results', () => {
+    mkdirSync(join(home, '.deepseek'), { recursive: true });
+    mkdirSync(join(home, '.grok'), { recursive: true });
+    const detected = detectClients(home, 'darwin').map((c) => c.id);
+    for (const id of UNSUPPORTED_IDS) {
+      expect(detected).not.toContain(id);
+    }
+  });
+
+  it('getClientsStatus still surfaces unsupported entries with detected=false', () => {
+    const status = getClientsStatus(home, 'darwin');
+    for (const id of UNSUPPORTED_IDS) {
+      const row = status.find((s) => s.id === id);
+      expect(row, `missing status row for ${id}`).toBeDefined();
+      expect(row!.detected).toBe(false);
+      expect(row!.configured).toBe(false);
+    }
+  });
+});
