@@ -1086,7 +1086,7 @@ export class Omnimind {
     const built = buildLLMConfig(this.getLLMConfig());
     if (!built.ok) {
       if (built.reason !== null) {
-        console.error(`[Omnimind] ${built.reason} — falling back to NullProvider.`);
+        console.warn(`[Omnimind] ${built.reason} — falling back to NullProvider.`);
       }
       this._llm = new NullProvider();
       return;
@@ -1276,12 +1276,14 @@ function buildLLMConfig(
 ): { ok: true; value: LLMConfig } | { ok: false; reason: string | null } {
   if (!cfg.enabled) return { ok: false, reason: null };
   if (cfg.provider === null) return { ok: false, reason: 'LLM enabled but provider unset' };
-  if (cfg.baseUrl === null) return { ok: false, reason: 'LLM baseUrl missing' };
   if (cfg.model === null && cfg.provider === 'ollama') {
     return { ok: false, reason: 'LLM model missing for ollama' };
   }
 
-  const guard = assertLoopback(cfg.baseUrl);
+  // Provider-specific default when the user never set a base URL (spec:
+  // defaults filled here, not in getLLMConfig).
+  const resolvedBaseUrl = cfg.baseUrl ?? (cfg.provider === 'lmstudio' ? 'http://127.0.0.1:1234/v1' : 'http://127.0.0.1:11434');
+  const guard = assertLoopback(resolvedBaseUrl);
   if (!guard.ok) {
     return { ok: false, reason: `LLM guard failed: ${llmErrorMessage(guard.error)}` };
   }
