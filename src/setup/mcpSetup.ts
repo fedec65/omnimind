@@ -256,6 +256,9 @@ export interface ClientStatus {
   readonly detected: boolean;
   readonly configured: boolean;
   readonly configPath: string;
+  readonly supported: boolean;
+  readonly notes?: string | undefined;
+  readonly trackingUrl?: string | undefined;
 }
 
 /** Detection + registration status for every supported client */
@@ -270,6 +273,9 @@ export function getClientsStatus(
     detected: detected.has(client.id),
     configured: isClientConfigured(client, home, platform),
     configPath: client.configPath(home, platform),
+    supported: client.supported,
+    ...(client.notes !== undefined ? { notes: client.notes } : {}),
+    ...(client.trackingUrl !== undefined ? { trackingUrl: client.trackingUrl } : {}),
   }));
 }
 
