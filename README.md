@@ -235,7 +235,7 @@ omnimind setup --client cursor     # one client only
 omnimind setup --dry-run           # preview changes, touch nothing
 ```
 
-This detects Claude Code, Cursor, Claude Desktop, and Kimi Code, and writes the MCP server entry into each client's config. The setup is idempotent and preserves your existing settings and other MCP server entries. Restart the clients afterwards. Manual configuration for each client is shown below as a fallback.
+This detects supported AI coding tools (Claude Code, Cursor, Claude Desktop, Kimi Code, OpenAI Codex CLI, VS Code with Copilot, Continue) and writes the MCP server entry into each client's config. The setup is idempotent and preserves your existing settings and other MCP server entries. Restart the clients afterwards. Manual configuration for each client is shown below as a fallback.
 
 > **Node.js version note:** Omnimind ships a native module (`better-sqlite3`) that is compiled for a specific Node.js ABI. Install and run the MCP server with the **same Node.js version** (e.g. install with Node 20 → run with Node 20). If you switch Node versions, run `npm rebuild better-sqlite3 -g omnimind` — otherwise the server crashes with `NODE_MODULE_VERSION` mismatch. For maximum determinism, point your client config at an explicit Node binary and the global install (see Kimi Code example below).
 
@@ -308,6 +308,50 @@ Add to `~/.kimi-code/mcp.json`. This example pins the Node runtime and the globa
 ```
 
 Adjust both paths to your system (`which node` and `npm root -g` tell you the right values).
+
+#### OpenAI Codex CLI
+
+Add to `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.omnimind]
+command = "npx"
+args = ["-y", "omnimind-mcp"]
+```
+
+#### VS Code (Copilot)
+
+Add to `~/Library/Application Support/Code/User/mcp.json` (macOS), `~/.config/Code/User/mcp.json` (Linux), or `%APPDATA%\Code\User\mcp.json` (Windows):
+
+```json
+{
+  "mcpServers": {
+    "omnimind": {
+      "command": "npx",
+      "args": ["-y", "omnimind-mcp"]
+    }
+  }
+}
+```
+
+#### Continue
+
+Add to `~/.continue/config.json`:
+
+```json
+{
+  "mcpServers": {
+    "omnimind": {
+      "command": "npx",
+      "args": ["-y", "omnimind-mcp"]
+    }
+  }
+}
+```
+
+#### Tracked but not yet supported
+
+DeepSeek, Z.ai, xAI Grok, and Muse have no public MCP client or coding CLI as of 2026-10-05. The Connect AI Tools panel surfaces them as "Not supported yet" cards with a link to the tracking issue so you can subscribe for updates.
 
 #### Any other MCP client
 
