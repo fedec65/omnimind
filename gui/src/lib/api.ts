@@ -161,6 +161,29 @@ export interface SharedSuggestionDto {
   suggestedAt: number;
 }
 
+export interface LlmConfig {
+  enabled: boolean;
+  provider: 'ollama' | 'lmstudio' | null;
+  model: string | null;
+  baseUrl: string | null;
+  timeoutMs: number;
+}
+
+export interface LlmStatus {
+  configured: boolean;
+  provider: 'null' | 'ollama' | 'lmstudio';
+  baseUrl?: string;
+  model?: string;
+  reachable: boolean;
+  latencyMs?: number;
+  error?: string;
+}
+
+export interface LlmEndpointResponse {
+  config: LlmConfig;
+  status: LlmStatus;
+}
+
 async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
   const base = await getBaseUrl();
   const res = await fetch(`${base}${path}`, init);
@@ -258,6 +281,10 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ key, value }),
     }),
+
+  llmConfig: () => fetchJson<LlmEndpointResponse>('/api/llm'),
+
+  llmStatus: () => fetchJson<LlmStatus>('/api/llm/status'),
 
   // With a url, always POSTs it so the server tests the edited URL ad-hoc
   // (no save side-effect). When `token` is omitted — the field still shows
