@@ -4,7 +4,7 @@ import type { AddressInfo } from 'node:net';
 import { httpRequest } from '../../../src/core/llm/httpRequest.js';
 
 interface Handler {
-  (req: IncomingMessage, body: string): { status: number; payload: string };
+  (req: IncomingMessage, body: string, res: import('node:http').ServerResponse): { status: number; payload: string; manual?: boolean };
 }
 
 let server: HttpServer;
@@ -28,7 +28,8 @@ beforeEach(async () => {
         res.end('no handler');
         return;
       }
-      const { status, payload } = handler(req, body);
+      const { status, payload, manual } = handler(req, body, res);
+      if (manual) return;
       res.statusCode = status;
       res.setHeader('content-type', 'application/json');
       res.end(payload);
@@ -138,5 +139,41 @@ describe('httpRequest', () => {
     expect(result.ok).toBe(true);
     expect(captured).toBe('{"a":1,"b":"two"}');
     expect(capturedCT).toBe('application/json');
+  });
+
+  it('returns err unavailable when response is aborted after headers', async () => {
+    lastHandler = (_req, _body, res) => {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.write('{');
+      setTimeout(() => res.destroy(), 10);
+      return { status: 0, payload: '', manual: true };
+    };
+    const result = await httpRequest({
+      url: baseUrl + '/abort',
+      method: 'POST',
+      body: { x: 1 },
+      timeoutMs: 1000,
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.kind).toBe('unavailable');
+  });
+
+  it('returns err unavailable when total deadline is exceeded', async () => {
+    lastHandler = () => {
+      // never respond
+      return { status: 0, payload: '', manual: true };
+    };
+    const result = await httpRequest({
+      url: baseUrl + '/hang',
+      method: 'POST',
+      body: { x: 1 },
+      timeoutMs: 100,
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.kind).toBe('unavailable');
+    if (result.error.kind !== 'unavailable') return;
+    expect(result.error.cause).toContain('timeout');
   });
 });
