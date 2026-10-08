@@ -747,8 +747,10 @@ Local LLM config commands:
           process.exit(1);
         }
         omni.setSetting('llmProvider', f.provider);
-        if (f.baseUrl) omni.setSetting('llmBaseUrl', f.baseUrl);
-        if (f.model) omni.setSetting('llmModel', f.model);
+        // Changing provider without a new endpoint/model clears the old ones so
+        // the new provider's defaults apply instead of targeting the wrong server.
+        omni.setSetting('llmBaseUrl', f.baseUrl ?? '');
+        omni.setSetting('llmModel', f.model ?? '');
         if (f.timeoutMs) omni.setSetting('llmTimeoutMs', f.timeoutMs);
         omni.setSetting('llmEnabled', 'true');
         await omni.reloadLLM();
@@ -777,6 +779,10 @@ async function summarizeCommand(args: string[]): Promise<void> {
   }
   const maxWordsFlag = parseFlag(args, '--max-words');
   const maxWords = maxWordsFlag !== null ? parseInt(maxWordsFlag, 10) : 80;
+  if (Number.isNaN(maxWords) || maxWords < 10 || maxWords > 500) {
+    console.error('Error: --max-words must be an integer between 10 and 500');
+    process.exit(1);
+  }
   const omni = await Omnimind.create({
     adapters: false,
     dataDir: process.env.OMNIMIND_DATA_DIR ?? undefined,
