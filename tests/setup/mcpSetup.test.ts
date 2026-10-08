@@ -17,12 +17,14 @@ import {
   getClientsStatus,
   isClientConfigured,
   mergeMcpServers,
+  mergeVsCodeServers,
   parseConfig,
   runSetup,
   getClient,
   MCP_CLIENTS,
   type McpClientId,
   type McpServerEntry,
+  type VsCodeClientConfig,
 } from '../../src/setup/mcpSetup.js';
 
 let home: string;
@@ -94,6 +96,24 @@ describe('mergeMcpServers', () => {
     const once = mergeMcpServers({}, buildEntry());
     const twice = mergeMcpServers(once, buildEntry());
     expect(Object.keys(twice.mcpServers ?? {})).toEqual(['omnimind']);
+  });
+});
+
+describe('mergeVsCodeServers', () => {
+  it('adds the omnimind entry under servers with type stdio', () => {
+    const merged = mergeVsCodeServers(
+      { theme: 'dark', servers: { other: { command: 'x', args: [], type: 'stdio' as const } } },
+      buildEntry(),
+    );
+    expect(merged.theme).toBe('dark');
+    expect(merged.servers?.other).toEqual({ command: 'x', args: [], type: 'stdio' });
+    expect(merged.servers?.omnimind).toEqual({ ...buildEntry(), type: 'stdio' });
+  });
+
+  it('is idempotent — re-running overwrites only the omnimind entry', () => {
+    const once = mergeVsCodeServers({}, buildEntry());
+    const twice = mergeVsCodeServers(once, buildEntry());
+    expect(Object.keys(twice.servers ?? {})).toEqual(['omnimind']);
   });
 });
 
@@ -232,7 +252,13 @@ describe('unsupported client entries', () => {
       expect(c, `missing entry for ${id}`).toBeDefined();
       expect(c!.supported).toBe(false);
       expect(c!.notes).toMatch(/.+/);
-      expect(c!.trackingUrl).toMatch(/^https?:\/\//);
+      expect(c!.trackingUrl).toMatch(/^https:\/\/github\.com\/fedec65\/omnimind\/issues/);
+    }
+  });
+
+  it('throws when an unsupported client is selected explicitly', () => {
+    for (const id of UNSUPPORTED_IDS) {
+      expect(() => runSetup({ home, clients: [id], out })).toThrow(/not supported yet/);
     }
   });
 
@@ -346,6 +372,24 @@ describe('codex registration', () => {
     const mode = statSync(join(home, '.codex', 'config.toml')).mode & 0o777;
     expect(mode).toBe(0o600);
   });
+
+  it('throws when an existing config.toml is malformed instead of overwriting it', () => {
+    const codexDir = join(home, '.codex');
+    mkdirSync(codexDir, { recursive: true });
+    writeFileSync(join(codexDir, 'config.toml'), '[mcp_servers\ncommand = "x"');
+    expect(() => runSetup({ home, clients: ['codex'], out })).toThrow(/TOML parse failed/);
+  });
+
+  it('dry-run prints the merged TOML without writing to disk', () => {
+    const codexDir = join(home, '.codex');
+    mkdirSync(codexDir, { recursive: true });
+    writeFileSync(join(codexDir, 'config.toml'), 'model = "gpt-5"\n');
+    runSetup({ home, clients: ['codex'], dryRun: true, out });
+    expect(existsSync(join(codexDir, 'config.toml.omnimind.tmp'))).toBe(false);
+    expect(output).toContain('[dry-run]');
+    expect(output).toContain('model = "gpt-5"');
+    expect(output).toContain('[mcp_servers.omnimind]');
+  });
 });
 
 describe('vscode paths', () => {
@@ -363,17 +407,28 @@ describe('vscode paths', () => {
     expect(vscode.configPath('/h', 'win32')).toBe('/h/AppData/Roaming/Code/User/mcp.json');
   });
 
-  it('detectPaths returns the same per-OS path', () => {
-    expect(vscode.detectPaths('/h', 'darwin')).toEqual(['/h/Library/Application Support/Code/User/mcp.json']);
-    expect(vscode.detectPaths('/h', 'linux')).toEqual(['/h/.config/Code/User/mcp.json']);
-    expect(vscode.detectPaths('/h', 'win32')).toEqual(['/h/AppData/Roaming/Code/User/mcp.json']);
+  it('detectPaths returns the User directory so fresh installs are detected', () => {
+    expect(vscode.detectPaths('/h', 'darwin')).toEqual(['/h/Library/Application Support/Code/User']);
+    expect(vscode.detectPaths('/h', 'linux')).toEqual(['/h/.config/Code/User']);
+    expect(vscode.detectPaths('/h', 'win32')).toEqual(['/h/AppData/Roaming/Code/User']);
   });
 
-  it('writes the entry on detection', () => {
+  it('detects VS Code by the User directory even when mcp.json is absent', () => {
+    mkdirSync(join(home, '.config', 'Code', 'User'), { recursive: true });
+    expect(detectClients(home, 'linux').map((c) => c.id)).toContain('vscode');
+  });
+
+  it('writes the entry under servers with type stdio', () => {
     runSetup({ home, clients: ['vscode'], out, platform: 'linux' });
     const path = join(home, '.config', 'Code', 'User', 'mcp.json');
-    const cfg = JSON.parse(readFileSync(path, 'utf8'));
-    expect(cfg.mcpServers.omnimind).toEqual(buildEntry());
+    const cfg = JSON.parse(readFileSync(path, 'utf8')) as VsCodeClientConfig;
+    expect(cfg.servers?.omnimind).toEqual({ ...buildEntry(), type: 'stdio' });
+    expect(cfg.mcpServers).toBeUndefined();
+  });
+
+  it('isClientConfigured reads servers.omnimind for VS Code', () => {
+    runSetup({ home, clients: ['vscode'], out, platform: 'linux' });
+    expect(isClientConfigured(getClient('vscode'), home, 'linux')).toBe(true);
   });
 });
 
