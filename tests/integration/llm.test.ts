@@ -115,4 +115,56 @@ describe('reloadLLM surface', () => {
     const status = await omni.getLLMStatus();
     expect(status.configured).toBe(false);
   });
+
+  it('reloadLLM() uses qwen2.5:3b default when Ollama model is unset', async () => {
+    omni.setSetting('llmEnabled', 'true');
+    omni.setSetting('llmProvider', 'ollama');
+    omni.setSetting('llmBaseUrl', base);
+    await omni.reloadLLM();
+    expect(omni.llm.name).toBe('ollama');
+    const cfg = omni.getLLMConfig();
+    expect(cfg.model).toBe('qwen2.5:3b');
+  });
+});
+
+describe('boot-time LLM env vars', () => {
+  let dir: string;
+  let fake: HttpServer;
+  let base: string;
+  let omni: Omnimind | undefined;
+
+  beforeEach(async () => {
+    dir = mkdtempSync(join(tmpdir(), 'omnimind-llm-env-'));
+    fake = createServer((req, res) => {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      if (req.url === '/api/tags') res.end(JSON.stringify({ models: [{ name: 'qwen2.5:3b' }] }));
+      else res.end(JSON.stringify({ message: { content: 'hello' } }));
+    });
+    await new Promise<void>((resolve) => fake.listen(0, '127.0.0.1', resolve));
+    base = `http://127.0.0.1:${(fake.address() as AddressInfo).port}`;
+  });
+
+  afterEach(async () => {
+    if (omni) await omni.close();
+    await new Promise<void>((resolve) => fake.close(() => resolve()));
+    rmSync(dir, { recursive: true, force: true });
+    delete process.env.OMNIMIND_LLM_ENABLED;
+    delete process.env.OMNIMIND_LLM_PROVIDER;
+    delete process.env.OMNIMIND_LLM_BASE_URL;
+    delete process.env.OMNIMIND_LLM_MODEL;
+    delete process.env.OMNIMIND_LLM_TIMEOUT_MS;
+  });
+
+  it('enables Ollama from env vars without config.llm', async () => {
+    process.env.OMNIMIND_LLM_ENABLED = 'true';
+    process.env.OMNIMIND_LLM_PROVIDER = 'ollama';
+    process.env.OMNIMIND_LLM_BASE_URL = base;
+    process.env.OMNIMIND_LLM_MODEL = 'qwen2.5:3b';
+    omni = await Omnimind.create({ dataDir: dir, adapters: false });
+    expect(omni.llm.name).toBe('ollama');
+    const cfg = omni.getLLMConfig();
+    expect(cfg.enabled).toBe(true);
+    expect(cfg.provider).toBe('ollama');
+    expect(cfg.model).toBe('qwen2.5:3b');
+  });
 });

@@ -343,23 +343,47 @@ export class Omnimind {
     // win when set. Reload the provider at the end so the boot-time state
     // is honored exactly once, with no race against user-saved settings.
     const bootLlm = config.llm;
-    if (bootLlm !== undefined) {
-      store.setSetting('llmEnabled', bootLlm.enabled ? 'true' : 'false');
-      const envProvider = process.env.OMNIMIND_LLM_PROVIDER;
-      if (envProvider !== undefined || bootLlm.provider !== undefined) {
-        store.setSetting('llmProvider', envProvider !== undefined ? envProvider : (bootLlm.provider as string));
+    const envEnabled = process.env.OMNIMIND_LLM_ENABLED;
+    const envProvider = process.env.OMNIMIND_LLM_PROVIDER;
+    const envUrl = process.env.OMNIMIND_LLM_BASE_URL;
+    const envModel = process.env.OMNIMIND_LLM_MODEL;
+    const envTimeout = process.env.OMNIMIND_LLM_TIMEOUT_MS;
+    const hasAnyEnvLlm =
+      envEnabled !== undefined ||
+      envProvider !== undefined ||
+      envUrl !== undefined ||
+      envModel !== undefined ||
+      envTimeout !== undefined;
+
+    if (bootLlm !== undefined || hasAnyEnvLlm) {
+      const enabled = envEnabled !== undefined ? envEnabled === 'true' : bootLlm?.enabled;
+      if (enabled !== undefined) {
+        store.setSetting('llmEnabled', enabled ? 'true' : 'false');
       }
-      const envUrl = process.env.OMNIMIND_LLM_BASE_URL;
-      if (envUrl !== undefined || bootLlm.baseUrl !== undefined) {
-        store.setSetting('llmBaseUrl', envUrl !== undefined ? envUrl : (bootLlm.baseUrl as string));
+
+      const provider = envProvider ?? bootLlm?.provider;
+      if (provider !== undefined) {
+        store.setSetting('llmProvider', provider as string);
       }
-      const envModel = process.env.OMNIMIND_LLM_MODEL;
-      if (envModel !== undefined || bootLlm.model !== undefined) {
-        store.setSetting('llmModel', envModel !== undefined ? envModel : (bootLlm.model as string));
+
+      const baseUrl = envUrl ?? bootLlm?.baseUrl;
+      if (baseUrl !== undefined) {
+        store.setSetting('llmBaseUrl', baseUrl as string);
       }
-      const envTimeout = process.env.OMNIMIND_LLM_TIMEOUT_MS;
-      if (envTimeout !== undefined || bootLlm.timeoutMs !== undefined) {
-        store.setSetting('llmTimeoutMs', envTimeout !== undefined ? envTimeout : String(bootLlm.timeoutMs));
+
+      const model = envModel ?? bootLlm?.model;
+      if (model !== undefined) {
+        store.setSetting('llmModel', model as string);
+      }
+
+      const timeoutMs =
+        envTimeout !== undefined
+          ? envTimeout
+          : bootLlm?.timeoutMs !== undefined
+            ? String(bootLlm.timeoutMs)
+            : undefined;
+      if (timeoutMs !== undefined) {
+        store.setSetting('llmTimeoutMs', timeoutMs);
       }
     }
     await omni.reloadLLM();
@@ -1022,15 +1046,19 @@ export class Omnimind {
       ? provider.value
       : null;
 
+    const resolvedModel = model.ok && model.value !== null && model.value.length > 0
+      ? model.value
+      : null;
+
     return {
       enabled: isEnabled,
       provider: resolvedProvider,
       baseUrl: baseUrl.ok && baseUrl.value !== null && baseUrl.value.length > 0
         ? baseUrl.value
         : null,
-      model: model.ok && model.value !== null && model.value.length > 0
-        ? model.value
-        : null,
+      model: resolvedProvider === 'ollama' && resolvedModel === null
+        ? 'qwen2.5:3b'
+        : resolvedModel,
       timeoutMs: timeoutMs.ok && timeoutMs.value !== null
         ? parseInt(timeoutMs.value, 10) || 30_000
         : 30_000,
@@ -1276,8 +1304,15 @@ function buildLLMConfig(
 ): { ok: true; value: LLMConfig } | { ok: false; reason: string | null } {
   if (!cfg.enabled) return { ok: false, reason: null };
   if (cfg.provider === null) return { ok: false, reason: 'LLM enabled but provider unset' };
-  if (cfg.model === null && cfg.provider === 'ollama') {
-    return { ok: false, reason: 'LLM model missing for ollama' };
+
+  // Provider-specific defaults: Ollama ships with a documented fallback;
+  // LM Studio autodetects via health() when model is omitted.
+  let model = cfg.model;
+  if (model === null && cfg.provider === 'ollama') {
+    model = 'qwen2.5:3b';
+  }
+  if (model === null) {
+    return { ok: false, reason: 'LLM model missing' };
   }
 
   // Provider-specific default when the user never set a base URL (spec:
@@ -1293,7 +1328,7 @@ function buildLLMConfig(
     value: {
       provider: cfg.provider,
       baseUrl: guard.value,
-      model: cfg.model ?? '',
+      model,
       timeoutMs: cfg.timeoutMs,
     },
   };
