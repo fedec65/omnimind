@@ -2,9 +2,9 @@
  * mcpSetup — idempotent MCP client registration for Omnimind.
  *
  * Generalizes the `setup-claude-code` script to all supported clients:
- * claude-code, cursor, claude-desktop, kimi. Auto-detects which clients
- * are installed and writes the Omnimind MCP server entry into each
- * client's config file.
+ * claude-code, cursor, claude-desktop, kimi, codex. Auto-detects which
+ * clients are installed and writes the Omnimind MCP server entry into
+ * each client's config file.
  *
  * Design choices (same as setup-claude-code):
  * - Pure functions exported for testability (homedir injectable).
@@ -25,8 +25,26 @@ import {
 } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
+import { stringify } from 'smol-toml';
+import {
+  readTomlConfig,
+  writeTomlConfig,
+  ensureMcpServer as ensureTomlMcpServer,
+  type TomlConfig,
+} from './tomlWriter.js';
 
-export type McpClientId = 'claude-code' | 'cursor' | 'claude-desktop' | 'kimi';
+export type McpClientId =
+  | 'claude-code'
+  | 'cursor'
+  | 'claude-desktop'
+  | 'kimi'
+  | 'codex'
+  | 'vscode'
+  | 'continue'
+  | 'deepseek'
+  | 'zai'
+  | 'grok'
+  | 'muse';
 
 export interface McpServerEntry {
   command: string;
@@ -39,6 +57,15 @@ export interface ClientConfig {
   [key: string]: unknown;
 }
 
+export interface VsCodeMcpServerEntry extends McpServerEntry {
+  type: 'stdio';
+}
+
+export interface VsCodeClientConfig {
+  servers?: Record<string, VsCodeMcpServerEntry>;
+  [key: string]: unknown;
+}
+
 export interface McpClient {
   readonly id: McpClientId;
   readonly name: string;
@@ -46,6 +73,16 @@ export interface McpClient {
   readonly configPath: (home: string, platform: NodeJS.Platform) => string;
   /** Paths whose existence indicates the client is installed */
   readonly detectPaths: (home: string, platform: NodeJS.Platform) => string[];
+  /**
+   * Whether this client is supported by Omnimind's MCP registration flow.
+   * `false` entries appear in the registry for honest signaling (the user
+   * searched for them) but are never auto-detected and never written to.
+   */
+  readonly supported: boolean;
+  /** Human-readable explanation shown in the GUI when `supported` is false. */
+  readonly notes?: string | undefined;
+  /** Link to a tracking issue shown alongside unsupported entries. */
+  readonly trackingUrl?: string | undefined;
 }
 
 const claudeDesktopDir = (home: string, platform: NodeJS.Platform): string => {
@@ -54,30 +91,99 @@ const claudeDesktopDir = (home: string, platform: NodeJS.Platform): string => {
   return join(home, '.config', 'Claude');
 };
 
+const vscodeUserDir = (home: string, platform: NodeJS.Platform): string => {
+  if (platform === 'darwin') return join(home, 'Library', 'Application Support', 'Code');
+  if (platform === 'win32') return join(home, 'AppData', 'Roaming', 'Code');
+  return join(home, '.config', 'Code');
+};
+
 export const MCP_CLIENTS: readonly McpClient[] = [
   {
     id: 'claude-code',
     name: 'Claude Code',
-    configPath: (home) => join(home, '.claude', 'settings.json'),
-    detectPaths: (home) => [join(home, '.claude')],
+    configPath: (home) => join(home, '.claude.json'),
+    detectPaths: (home) => [join(home, '.claude'), join(home, '.claude.json')],
+    supported: true,
   },
   {
     id: 'cursor',
     name: 'Cursor',
     configPath: (home) => join(home, '.cursor', 'mcp.json'),
     detectPaths: (home) => [join(home, '.cursor')],
+    supported: true,
   },
   {
     id: 'claude-desktop',
     name: 'Claude Desktop',
     configPath: (home, platform) => join(claudeDesktopDir(home, platform), 'claude_desktop_config.json'),
     detectPaths: (home, platform) => [claudeDesktopDir(home, platform)],
+    supported: true,
   },
   {
     id: 'kimi',
     name: 'Kimi Code',
     configPath: (home) => join(home, '.kimi-code', 'mcp.json'),
     detectPaths: (home) => [join(home, '.kimi-code')],
+    supported: true,
+  },
+  {
+    id: 'codex',
+    name: 'OpenAI Codex CLI',
+    configPath: (home) => join(home, '.codex', 'config.toml'),
+    detectPaths: (home) => [join(home, '.codex')],
+    supported: true,
+  },
+  {
+    id: 'vscode',
+    name: 'VS Code (Copilot)',
+    configPath: (home, platform) => join(vscodeUserDir(home, platform), 'User', 'mcp.json'),
+    // VS Code may be installed without an MCP config file yet; detect the
+    // user-data directory so the Connect button still appears.
+    detectPaths: (home, platform) => [join(vscodeUserDir(home, platform), 'User')],
+    supported: true,
+  },
+  {
+    id: 'continue',
+    name: 'Continue',
+    configPath: (home) => join(home, '.continue', 'config.json'),
+    detectPaths: (home) => [join(home, '.continue')],
+    supported: true,
+  },
+  {
+    id: 'deepseek',
+    name: 'DeepSeek',
+    configPath: () => '',
+    detectPaths: () => [],
+    supported: false,
+    notes: 'DeepSeek does not provide a local MCP client or desktop app with a config file.',
+    trackingUrl: 'https://github.com/fedec65/omnimind/issues?q=is%3Aissue+deepseek',
+  },
+  {
+    id: 'zai',
+    name: 'Z.ai (GLM)',
+    configPath: () => '',
+    detectPaths: () => [],
+    supported: false,
+    notes: 'Z.ai is a model subscription. Point Claude Code, Cline, or other MCP hosts at it instead.',
+    trackingUrl: 'https://github.com/fedec65/omnimind/issues?q=is%3Aissue+z.ai',
+  },
+  {
+    id: 'grok',
+    name: 'xAI Grok',
+    configPath: () => '',
+    detectPaths: () => [],
+    supported: false,
+    notes: 'xAI Grok has no public MCP host or coding CLI as of 2026-10-05.',
+    trackingUrl: 'https://github.com/fedec65/omnimind/issues?q=is%3Aissue+grok',
+  },
+  {
+    id: 'muse',
+    name: 'Muse',
+    configPath: () => '',
+    detectPaths: () => [],
+    supported: false,
+    notes: 'No "Muse" product with an MCP host is publicly available.',
+    trackingUrl: 'https://github.com/fedec65/omnimind/issues?q=is%3Aissue+muse',
   },
 ] as const;
 
@@ -125,6 +231,22 @@ export function mergeMcpServers(existing: ClientConfig, entry: McpServerEntry): 
   return next;
 }
 
+/**
+ * Merge the omnimind entry into a VS Code user-level MCP config.
+ * VS Code reads `servers.<id>` with `type: "stdio"` instead of `mcpServers`.
+ */
+export function mergeVsCodeServers(
+  existing: VsCodeClientConfig,
+  entry: McpServerEntry,
+): VsCodeClientConfig {
+  const next: VsCodeClientConfig = { ...existing };
+  next.servers = {
+    ...(existing.servers ?? {}),
+    omnimind: { ...entry, type: 'stdio' as const },
+  };
+  return next;
+}
+
 /** Clients that appear to be installed under the given home directory */
 export function detectClients(
   home: string = homedir(),
@@ -136,16 +258,28 @@ export function detectClients(
   });
 }
 
-/** Whether the client's config already contains the Omnimind MCP entry */
+/** Whether any of the client's config targets already contains the Omnimind MCP entry */
 export function isClientConfigured(
   client: McpClient,
   home: string = homedir(),
   platform: NodeJS.Platform = process.platform,
 ): boolean {
-  const path = client.configPath(home, platform);
-  if (!existsSync(path)) return false;
-  const config = parseConfig(readFileSync(path, 'utf8'));
-  return config.mcpServers?.omnimind !== undefined;
+  const targets = writeTargetsFor(client, home, platform);
+  return targets.some((path) => {
+    if (!existsSync(path)) return false;
+    if (client.id === 'codex') {
+      const result = readTomlConfig(path);
+      if (!result.ok) return false;
+      const servers = (result.value.mcp_servers as Record<string, McpServerEntry> | undefined) ?? {};
+      return servers.omnimind !== undefined;
+    }
+    if (client.id === 'vscode') {
+      const config = parseConfig(readFileSync(path, 'utf8')) as VsCodeClientConfig;
+      return config.servers?.omnimind !== undefined;
+    }
+    const config = parseConfig(readFileSync(path, 'utf8'));
+    return config.mcpServers?.omnimind !== undefined;
+  });
 }
 
 export interface ClientStatus {
@@ -154,6 +288,9 @@ export interface ClientStatus {
   readonly detected: boolean;
   readonly configured: boolean;
   readonly configPath: string;
+  readonly supported: boolean;
+  readonly notes?: string | undefined;
+  readonly trackingUrl?: string | undefined;
 }
 
 /** Detection + registration status for every supported client */
@@ -168,6 +305,9 @@ export function getClientsStatus(
     detected: detected.has(client.id),
     configured: isClientConfigured(client, home, platform),
     configPath: client.configPath(home, platform),
+    supported: client.supported,
+    ...(client.notes !== undefined ? { notes: client.notes } : {}),
+    ...(client.trackingUrl !== undefined ? { trackingUrl: client.trackingUrl } : {}),
   }));
 }
 
@@ -208,20 +348,74 @@ export function runSetup(opts: SetupOptions = {}): SetupResult[] {
 
   if (selected.length === 0) {
     throw new Error(
-      'No supported MCP clients detected. Use --client <claude-code|cursor|claude-desktop|kimi> to configure one explicitly.',
+      'No supported MCP clients detected. Use --client <claude-code|cursor|claude-desktop|kimi|codex> to configure one explicitly.',
     );
   }
 
   const results: SetupResult[] = [];
   for (const client of selected) {
-    const path = client.configPath(home, platform);
-    const existing = existsSync(path) ? readFileSync(path, 'utf8') : '';
-    const merged = mergeMcpServers(parseConfig(existing), entry);
-    const serialized = JSON.stringify(merged, null, 2) + '\n';
+    if (!client.supported) {
+      throw new Error(
+        `${client.name} is not supported yet. See ${client.trackingUrl ?? 'the issue tracker'} for updates.`,
+      );
+    }
 
-    if (dryRun) {
-      out.write(`[dry-run] Would write to ${path}:\n${serialized}\n`);
-    } else {
+    const targets = writeTargetsFor(client, home, platform);
+    for (const path of targets) {
+      if (dryRun) {
+        if (client.id === 'codex') {
+          const readResult = readTomlConfig(path);
+          if (!readResult.ok && existsSync(path)) {
+            throw new Error(`Failed to read existing ${path}: ${readResult.error.message}`);
+          }
+          const baseToml: TomlConfig = readResult.ok ? readResult.value : {};
+          const next = ensureTomlMcpServer(baseToml, 'omnimind', entry);
+          out.write(`[dry-run] Would write to ${path}:\n${stringify(next)}\n`);
+        } else if (client.id === 'vscode') {
+          const existing = existsSync(path) ? readFileSync(path, 'utf8') : '';
+          const merged = mergeVsCodeServers(parseConfig(existing) as VsCodeClientConfig, entry);
+          const serialized = JSON.stringify(merged, null, 2) + '\n';
+          out.write(`[dry-run] Would write to ${path}:\n${serialized}\n`);
+        } else {
+          const existing = existsSync(path) ? readFileSync(path, 'utf8') : '';
+          const merged = mergeMcpServers(parseConfig(existing), entry);
+          const serialized = JSON.stringify(merged, null, 2) + '\n';
+          out.write(`[dry-run] Would write to ${path}:\n${serialized}\n`);
+        }
+        continue;
+      }
+
+      if (client.id === 'codex') {
+        const readResult = readTomlConfig(path);
+        if (!readResult.ok && existsSync(path)) {
+          throw new Error(`Failed to read existing ${path}: ${readResult.error.message}`);
+        }
+        const baseToml: TomlConfig = readResult.ok ? readResult.value : {};
+        const next = ensureTomlMcpServer(baseToml, 'omnimind', entry);
+        const writeResult = writeTomlConfig(path, next);
+        if (!writeResult.ok) {
+          throw new Error(`Failed to write ${path}: ${writeResult.error.message}`);
+        }
+        out.write(`Registered Omnimind MCP server in ${client.name} (${path})\n`);
+        continue;
+      }
+
+      if (client.id === 'vscode') {
+        const existing = existsSync(path) ? readFileSync(path, 'utf8') : '';
+        const merged = mergeVsCodeServers(parseConfig(existing) as VsCodeClientConfig, entry);
+        const serialized = JSON.stringify(merged, null, 2) + '\n';
+        mkdirSync(dirname(path), { recursive: true });
+        const tmpPath = `${path}.omnimind.tmp`;
+        writeFileSync(tmpPath, serialized, { mode: 0o600 });
+        renameSync(tmpPath, path);
+        chmodSync(path, 0o600);
+        out.write(`Registered Omnimind MCP server in ${client.name} (${path})\n`);
+        continue;
+      }
+
+      const existing = existsSync(path) ? readFileSync(path, 'utf8') : '';
+      const merged = mergeMcpServers(parseConfig(existing), entry);
+      const serialized = JSON.stringify(merged, null, 2) + '\n';
       mkdirSync(dirname(path), { recursive: true });
       const tmpPath = `${path}.omnimind.tmp`;
       writeFileSync(tmpPath, serialized, { mode: 0o600 });
@@ -229,7 +423,28 @@ export function runSetup(opts: SetupOptions = {}): SetupResult[] {
       chmodSync(path, 0o600);
       out.write(`Registered Omnimind MCP server in ${client.name} (${path})\n`);
     }
-    results.push({ client, path, dryRun });
+    results.push({ client, path: targets[0]!, dryRun });
   }
   return results;
+}
+
+/**
+ * The list of files to write for a given client. Single-file clients
+ * (cursor, kimi, claude-desktop, …) have one target. Claude Code
+ * dual-writes to its user-scope JSON config and a user-scope
+ * .claude/settings.json fallback so installs work whether Claude Code
+ * reads the legacy file or the newer settings path.
+ */
+function writeTargetsFor(
+  client: McpClient,
+  home: string,
+  platform: NodeJS.Platform,
+): string[] {
+  if (client.id === 'claude-code') {
+    return [
+      client.configPath(home, platform),                  // ~/.claude.json
+      join(home, '.claude', 'settings.json'),              // user-scope fallback
+    ];
+  }
+  return [client.configPath(home, platform)];
 }

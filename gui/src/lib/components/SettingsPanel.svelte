@@ -513,27 +513,44 @@
           </p>
           <div class="space-y-3">
             {#each mcpClients as client (client.id)}
-              <div class="flex items-center justify-between">
-                <div class="flex items-center gap-2">
-                  <span class="text-sm text-[var(--text)]">{client.name}</span>
-                  {#if !client.detected}
-                    <span class="text-xs px-2 py-0.5 rounded-full bg-[var(--border)] text-[var(--text-muted)]">not installed</span>
-                  {:else if client.configured}
-                    <span class="text-xs px-2 py-0.5 rounded-full bg-green-500/15 text-green-400">connected</span>
-                  {:else}
-                    <span class="text-xs px-2 py-0.5 rounded-full bg-yellow-500/15 text-yellow-400">detected</span>
+              {#if !client.supported}
+                <div class="flex flex-col gap-1 opacity-60">
+                  <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-2">
+                      <span class="text-sm text-[var(--text-muted)] line-through">{client.name}</span>
+                      <span class="text-xs px-2 py-0.5 rounded-full bg-[var(--border)] text-[var(--text-muted)]">Not supported yet</span>
+                    </div>
+                  </div>
+                  {#if client.notes}
+                    <p class="text-xs text-[var(--text-muted)] pl-1">{client.notes}</p>
+                  {/if}
+                  {#if client.trackingUrl}
+                    <a href={client.trackingUrl} target="_blank" rel="noopener" class="text-xs text-[var(--accent)] hover:underline pl-1 self-start">Track issue →</a>
                   {/if}
                 </div>
-                {#if client.detected}
-                  <button
-                    onclick={() => handleRegister([client.id])}
-                    disabled={isRegistering}
-                    class="px-3 py-1.5 text-xs bg-[var(--surface)] border border-[var(--border)] rounded-lg hover:bg-[var(--surface-hover)] transition-colors disabled:opacity-50"
-                  >
-                    {client.configured ? 'Re-register' : 'Connect'}
-                  </button>
-                {/if}
-              </div>
+              {:else}
+                <div class="flex items-center justify-between">
+                  <div class="flex items-center gap-2">
+                    <span class="text-sm text-[var(--text)]">{client.name}</span>
+                    {#if !client.detected}
+                      <span class="text-xs px-2 py-0.5 rounded-full bg-[var(--border)] text-[var(--text-muted)]">not installed</span>
+                    {:else if client.configured}
+                      <span class="text-xs px-2 py-0.5 rounded-full bg-green-500/15 text-green-400">connected</span>
+                    {:else}
+                      <span class="text-xs px-2 py-0.5 rounded-full bg-yellow-500/15 text-yellow-400">detected</span>
+                    {/if}
+                  </div>
+                  {#if client.detected}
+                    <button
+                      onclick={() => handleRegister([client.id])}
+                      disabled={isRegistering}
+                      class="px-3 py-1.5 text-xs bg-[var(--surface)] border border-[var(--border)] rounded-lg hover:bg-[var(--surface-hover)] transition-colors disabled:opacity-50"
+                    >
+                      {client.configured ? 'Re-register' : 'Connect'}
+                    </button>
+                  {/if}
+                </div>
+              {/if}
             {/each}
           </div>
           <div class="flex flex-wrap items-center gap-3 mt-4">
