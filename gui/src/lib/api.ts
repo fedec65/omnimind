@@ -120,11 +120,14 @@ export interface BusStats {
 }
 
 export interface McpClientStatus {
-  id: 'claude-code' | 'cursor' | 'claude-desktop' | 'kimi';
+  id: string;
   name: string;
   detected: boolean;
   configured: boolean;
   configPath: string;
+  supported: boolean;
+  notes?: string;
+  trackingUrl?: string;
 }
 
 export interface WingCount {

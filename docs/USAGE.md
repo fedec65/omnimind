@@ -65,7 +65,7 @@ The agent calls `omnimind_search` and answers from the results.
 
 Everything you do in the GUI — searching, reading, creating memories — also feeds the prediction engine (from v0.6.8 onward).
 
-**Settings → Connect AI Tools** (v0.7.3+): register the Omnimind MCP server in Claude Code, Cursor, Claude Desktop, and Kimi Code with one click — the registration points at the app's bundled backend, so no npm install is required. The same panel can install the `omnimind` shell command (`/usr/local/bin` or `~/.local/bin`).
+**Settings → Connect AI Tools** (v0.7.3+): register the Omnimind MCP server in Claude Code, Cursor, Claude Desktop, Kimi Code, OpenAI Codex CLI, VS Code (Copilot), and Continue with one click — the registration points at the app's bundled backend, so no npm install is required. The same panel also surfaces DeepSeek, Z.ai, xAI Grok, and Muse as "Not supported yet" cards with links to the tracking issues. The panel can also install the `omnimind` shell command (`/usr/local/bin` or `~/.local/bin`).
 
 ---
 
