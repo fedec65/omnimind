@@ -20,7 +20,7 @@ export function assertLoopback(url: string): Result<string, LLMError> {
 
   const raw = u.hostname.toLowerCase();
   const h = raw.startsWith('[') && raw.endsWith(']') ? raw.slice(1, -1) : raw;
-  const allowed = h === 'localhost' || h === '127.0.0.1' || h === '::1' || h === '0.0.0.0';
+  const allowed = h === 'localhost' || h === '127.0.0.1' || h === '::1';
   if (!allowed) {
     return err({ kind: 'config', reason: `LLM provider must be loopback, got: ${h}` });
   }

@@ -6,7 +6,6 @@ describe('assertLoopback', () => {
     ['http://127.0.0.1:11434', 'http://127.0.0.1:11434/'],
     ['http://localhost:1234/v1', 'http://localhost:1234/v1'],
     ['http://[::1]:11434', 'http://[::1]:11434/'],
-    ['http://0.0.0.0:1234/v1', 'http://0.0.0.0:1234/v1'],
   ])('allows loopback host %s', (input, expected) => {
     const r = assertLoopback(input);
     expect(r.ok).toBe(true);
@@ -16,6 +15,7 @@ describe('assertLoopback', () => {
   it.each([
     ['https://api.openai.com/v1', 'LLM provider must be loopback'],
     ['http://example.com:9999', 'LLM provider must be loopback'],
+    ['http://0.0.0.0:1234/v1', 'LLM provider must be loopback'],
     ['ftp://127.0.0.1/foo', 'protocol must be http(s)'],
     ['not a url', 'invalid URL'],
   ])('rejects %s', (input, reasonFragment) => {
