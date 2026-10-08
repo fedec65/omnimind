@@ -1014,6 +1014,7 @@ export class OmnimindMcpServer {
       };
     }
 
+    await this.omni.reloadLLM();
     const result = await buildSummarizeResult(input, this.omni.llm);
     return {
       content: [
