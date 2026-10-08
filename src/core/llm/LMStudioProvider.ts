@@ -31,6 +31,13 @@ export class LMStudioProvider implements LLMProvider {
 
   async summarize(text: string, opts?: LLMSummaryOptions | undefined): Promise<Result<string, LLMError>> {
     const maxWords = opts?.maxWords ?? 80;
+    if (this.activeModel() === '') {
+      const healthResult = await this.health();
+      if (!healthResult.ok) return err(healthResult.error);
+      if (this.activeModel() === '') {
+        return err({ kind: 'config', reason: 'LM Studio has no models loaded' });
+      }
+    }
     const result = await httpRequest({
       url: `${this.baseUrl}/chat/completions`,
       method: 'POST',
@@ -61,7 +68,7 @@ export class LMStudioProvider implements LLMProvider {
     if (!result.ok) return err(result.error);
     const body = result.value as { data?: Array<{ id?: unknown }> } | undefined;
     const firstId = Array.isArray(body?.data) && body.data.length > 0 ? body.data[0]?.id : undefined;
-    if (typeof firstId === 'string') this.cachedModel = firstId;
+    if (this.model === '' && typeof firstId === 'string') this.cachedModel = firstId;
     return ok(true);
   }
 }

@@ -68,6 +68,36 @@ describe('LMStudioProvider', () => {
     expect((chatBody as { model?: string }).model).toBe('my-model');
   });
 
+  it('health does not overwrite an explicitly configured model', async () => {
+    modelsJson = { data: [{ id: 'other-model' }] };
+    const p = make('explicit-model');
+    const r = await p.health();
+    expect(r.ok).toBe(true);
+    const summary = await p.summarize('hi');
+    expect(summary.ok).toBe(true);
+    if (summary.ok) expect(summary.value).toBe('lm summary');
+    expect((chatBody as { model?: string }).model).toBe('explicit-model');
+  });
+
+  it('summarize autodetects model when none is configured', async () => {
+    chatBody = null;
+    chatJson = { choices: [{ message: { content: 'autodetected summary' } }] };
+    modelsJson = { data: [{ id: 'autodetect-model' }] };
+    const p = make('');
+    const r = await p.summarize('hello');
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.value).toBe('autodetected summary');
+    expect((chatBody as { model?: string }).model).toBe('autodetect-model');
+  });
+
+  it('summarize returns config error when no model is configured and /models is empty', async () => {
+    modelsJson = { data: [] };
+    const p = make('');
+    const r = await p.summarize('hello');
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error.kind).toBe('config');
+  });
+
   it('returns response error on non-2xx', async () => {
     chatStatus = 503;
     chatJson = { error: 'model loading' };
