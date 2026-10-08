@@ -119,6 +119,8 @@
     saveMsg = null;
     try {
       for (const [key, value] of Object.entries(form)) {
+        // The Local LLM card has its own Save button and state.
+        if (key.startsWith('llm')) continue;
         // The loaded token is the '***' mask — never persist it over the real secret.
         if (key === 'sharedToken' && value === '***') continue;
         await api.setSetting(key, value);
@@ -254,9 +256,9 @@
     saveMsg = null;
     try {
       await api.setSetting('llmEnabled', form.llmEnabled);
-      if (form.llmProvider) await api.setSetting('llmProvider', form.llmProvider);
-      if (form.llmBaseUrl) await api.setSetting('llmBaseUrl', form.llmBaseUrl);
-      if (form.llmModel) await api.setSetting('llmModel', form.llmModel);
+      await api.setSetting('llmProvider', form.llmProvider);
+      await api.setSetting('llmBaseUrl', form.llmBaseUrl);
+      await api.setSetting('llmModel', form.llmModel);
       await api.setSetting('llmTimeoutMs', form.llmTimeoutMs || '15000');
       saveMsg = 'Local LLM settings saved';
       setTimeout(() => (saveMsg = null), 3000);
