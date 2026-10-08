@@ -20,6 +20,10 @@
   let sharedTestMsg = $state<string | null>(null);
   let sharedTestOk = $state(false);
 
+  let llmStatusMsg = $state<string | null>(null);
+  let isTestingLlm = $state(false);
+  let llmStatusOk = $state(false);
+
   let settings = $state<Record<string, string>>({});
   let form = $state({
     dataDir: '',
@@ -31,6 +35,11 @@
     sharedEnabled: 'false',
     sharedServerUrl: '',
     sharedToken: '',
+    llmEnabled: 'false',
+    llmProvider: '',
+    llmBaseUrl: '',
+    llmModel: '',
+    llmTimeoutMs: '15000',
   });
 
   onMount(async () => {
@@ -47,6 +56,16 @@
       // GET /api/settings masks the token as '***' (write-only secret); the
       // field shows the mask until the user types a new token.
       form.sharedToken = settings.sharedToken || '';
+      try {
+        const llm = await api.llmConfig();
+        form.llmEnabled = llm.config.enabled ? 'true' : 'false';
+        form.llmProvider = llm.config.provider ?? '';
+        form.llmBaseUrl = llm.config.baseUrl ?? '';
+        form.llmModel = llm.config.model ?? '';
+        form.llmTimeoutMs = String(llm.config.timeoutMs ?? 15000);
+      } catch {
+        // Sidecar too old to expose LLM endpoints — leave defaults.
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load settings');
     } finally {
@@ -100,6 +119,8 @@
     saveMsg = null;
     try {
       for (const [key, value] of Object.entries(form)) {
+        // The Local LLM card has its own Save button and state.
+        if (key.startsWith('llm')) continue;
         // The loaded token is the '***' mask — never persist it over the real secret.
         if (key === 'sharedToken' && value === '***') continue;
         await api.setSetting(key, value);
@@ -229,6 +250,48 @@
       isTestingShared = false;
     }
   }
+
+  async function handleSaveLlm() {
+    isSaving = true;
+    saveMsg = null;
+    try {
+      await api.setSetting('llmEnabled', form.llmEnabled);
+      await api.setSetting('llmProvider', form.llmProvider);
+      await api.setSetting('llmBaseUrl', form.llmBaseUrl);
+      await api.setSetting('llmModel', form.llmModel);
+      await api.setSetting('llmTimeoutMs', form.llmTimeoutMs || '15000');
+      saveMsg = 'Local LLM settings saved';
+      setTimeout(() => (saveMsg = null), 3000);
+      await refreshLlmStatus();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to save LLM settings');
+    } finally {
+      isSaving = false;
+    }
+  }
+
+  async function refreshLlmStatus() {
+    const status = await api.llmStatus();
+    llmStatusOk = status.reachable && status.configured;
+    llmStatusMsg = llmStatusOk
+      ? `Connected${status.latencyMs !== undefined ? ` (${status.latencyMs}ms)` : ''}`
+      : status.configured
+        ? 'Disconnected (check your local LLM is running)'
+        : 'Not enabled';
+  }
+
+  async function handleTestLlm() {
+    isTestingLlm = true;
+    llmStatusMsg = null;
+    try {
+      await refreshLlmStatus();
+    } catch (e) {
+      llmStatusOk = false;
+      llmStatusMsg = `Test failed: ${e instanceof Error ? e.message : String(e)}`;
+    } finally {
+      isTestingLlm = false;
+    }
+  }
 </script>
 
 <div class="max-w-2xl mx-auto space-y-6">
@@ -281,6 +344,62 @@
               class="w-full bg-[var(--bg)] border border-[var(--border)] rounded-lg px-3 py-2 text-sm text-[var(--text)] focus:outline-none focus:border-[var(--accent)]"
             />
             <p class="text-xs text-[var(--text-muted)] mt-1">Default category for new memories.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- Local LLM -->
+      <section class="bg-[var(--surface)] rounded-xl p-6 border border-[var(--border)]">
+        <div class="flex items-center justify-between">
+          <h3 class="text-sm font-medium text-[var(--text-muted)] uppercase tracking-wider">Local LLM</h3>
+          <label class="flex items-center gap-2 text-sm text-[var(--text)] cursor-pointer">
+            <input type="checkbox" checked={form.llmEnabled === 'true'}
+              onchange={(e: Event) => (form.llmEnabled = (e.currentTarget as HTMLInputElement).checked ? 'true' : 'false')}
+              class="accent-[var(--accent)]" />
+            Enabled
+          </label>
+        </div>
+        <p class="text-xs text-[var(--text-muted)] mt-1 mb-4">
+          Plug in a local LLM (Ollama or LM Studio) for opt-in summarization. 100% local — never sends data to the cloud.
+        </p>
+        <div class="space-y-3">
+          <div>
+            <label class="block text-sm text-[var(--text)] mb-1">Provider</label>
+            <select bind:value={form.llmProvider}
+              class="w-full bg-[var(--bg)] border border-[var(--border)] rounded-lg px-3 py-2 text-sm text-[var(--text)]">
+              <option value="">—</option>
+              <option value="ollama">Ollama</option>
+              <option value="lmstudio">LM Studio</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-sm text-[var(--text)] mb-1">Base URL</label>
+            <input type="text" bind:value={form.llmBaseUrl}
+              placeholder="http://127.0.0.1:11434" class="w-full bg-[var(--bg)] border border-[var(--border)] rounded-lg px-3 py-2 text-sm text-[var(--text)] focus:outline-none focus:border-[var(--accent)]" />
+            <p class="text-xs text-[var(--text-muted)] mt-1">Loopback only. Must be running locally.</p>
+          </div>
+          <div>
+            <label class="block text-sm text-[var(--text)] mb-1">Model</label>
+            <input type="text" bind:value={form.llmModel} placeholder="qwen2.5:3b"
+              class="w-full bg-[var(--bg)] border border-[var(--border)] rounded-lg px-3 py-2 text-sm text-[var(--text)] focus:outline-none focus:border-[var(--accent)]" />
+          </div>
+          <div>
+            <label class="block text-sm text-[var(--text)] mb-1">Timeout (ms)</label>
+            <input type="number" bind:value={form.llmTimeoutMs}
+              class="w-full bg-[var(--bg)] border border-[var(--border)] rounded-lg px-3 py-2 text-sm text-[var(--text)] focus:outline-none focus:border-[var(--accent)]" />
+          </div>
+          <div class="flex items-center gap-3">
+            <button onclick={handleSaveLlm} disabled={isSaving}
+              class="px-4 py-2 bg-[var(--accent)] text-white text-sm font-medium rounded-lg hover:opacity-90 transition-opacity disabled:opacity-50">
+              {isSaving ? 'Saving...' : 'Save'}
+            </button>
+            <button onclick={handleTestLlm} disabled={isTestingLlm}
+              class="px-4 py-2 bg-[var(--surface)] border border-[var(--border)] text-sm rounded-lg hover:bg-[var(--surface-hover)] transition-colors disabled:opacity-50">
+              {isTestingLlm ? 'Testing...' : 'Test Connection'}
+            </button>
+            {#if llmStatusMsg}
+              <span class="text-sm {llmStatusOk ? 'text-green-400' : 'text-red-400'}">{llmStatusMsg}</span>
+            {/if}
           </div>
         </div>
       </section>

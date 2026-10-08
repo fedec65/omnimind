@@ -12,6 +12,8 @@
  *   status        Show system status
  *   mine <path>   Import files/conversations into memory
  *   wipe          Clear all memories (with confirmation)
+ *   config llm    Manage the local LLM provider (status|enable|disable)
+ *   summarize     Summarize text with the local LLM
  * 
  * Usage:
  *   omnimind init
@@ -23,6 +25,8 @@
 import { Omnimind, resolveGitBranch } from './index.js';
 import { rebuildGraph } from './core/GraphRebuilder.js';
 import { runSetup, type McpClientId } from './setup/mcpSetup.js';
+import { llmErrorMessage } from './core/llm/index.js';
+import { parseLlmEnableArgs } from './cli/llmFlags.js';
 import { homedir } from 'os';
 import { dirname, join, resolve } from 'path';
 import { fileURLToPath } from 'url';
@@ -41,6 +45,8 @@ const commands: Record<string, (args: string[]) => Promise<void>> = {
   bus: busCommand,
   shared: sharedCommand,
   setup: setupCommand,
+  config: configCommand,
+  summarize: summarizeCommand,
 };
 
 async function main(): Promise<void> {
@@ -150,6 +156,14 @@ Commands:
   shared publish --id <id> --visibility org|team [--workspace-id <uuid>]
                           Publish a local L2/L3 memory to the shared server
   shared suggestions      List local L2/L3 memories pending publish
+
+  config llm status|enable|disable
+                          Manage the local LLM provider
+    enable --provider <ollama|lmstudio> [--base-url URL] [--model NAME] [--timeout-ms N]
+    disable
+
+  summarize <text>        Summarize text with the local LLM
+    --max-words <n>       Max words (default: 80, 10-500)
 
 Examples:
   omnimind init
@@ -676,6 +690,120 @@ async function wipe(): Promise<void> {
   } catch (error) {
     console.error(`Error clearing memories: ${error instanceof Error ? error.message : String(error)}`);
     process.exit(1);
+  }
+}
+
+async function configCommand(args: string[]): Promise<void> {
+  const sub = args[0];
+  if (!sub || sub === '--help') {
+    console.log(`
+Local LLM config commands:
+  config llm status
+  config llm enable --provider <ollama|lmstudio> [--base-url URL] [--model NAME] [--timeout-ms N]
+  config llm disable
+`);
+    return;
+  }
+  if (sub !== 'llm') {
+    console.error(`Unknown config subcommand: ${sub}`);
+    process.exit(1);
+  }
+  const op = args[1];
+  const omni = await Omnimind.create({
+    adapters: false,
+    dataDir: process.env.OMNIMIND_DATA_DIR ?? undefined,
+  });
+
+  try {
+    switch (op) {
+      case 'status': {
+        const cfg = omni.getLLMConfig();
+        console.log('Local LLM');
+        console.log('==========');
+        console.log(`Enabled: ${cfg.enabled}`);
+        console.log(`Provider: ${cfg.provider ?? 'null'}`);
+        if (cfg.provider) {
+          console.log(`Base URL: ${cfg.baseUrl ?? '(default)'}`);
+          console.log(`Model: ${cfg.model ?? '(autodetect)'}`);
+          console.log(`Timeout: ${cfg.timeoutMs}ms`);
+        }
+        const status = await omni.getLLMStatus();
+        console.log(`Configured: ${status.configured}`);
+        console.log(
+          `Reachable: ${status.reachable}` +
+            (status.latencyMs !== undefined ? ` (${status.latencyMs}ms)` : ''),
+        );
+        if (status.error) {
+          console.log(`Error: ${status.error}`);
+        }
+        break;
+      }
+      case 'enable': {
+        const f = parseLlmEnableArgs(args);
+        if (!f) {
+          console.error(
+            'Usage: omnimind config llm enable --provider <ollama|lmstudio> [--base-url URL] [--model NAME] [--timeout-ms N]',
+          );
+          process.exit(1);
+        }
+        omni.setSetting('llmProvider', f.provider);
+        // Changing provider without a new endpoint/model clears the old ones so
+        // the new provider's defaults apply instead of targeting the wrong server.
+        omni.setSetting('llmBaseUrl', f.baseUrl ?? '');
+        omni.setSetting('llmModel', f.model ?? '');
+        if (f.timeoutMs) omni.setSetting('llmTimeoutMs', f.timeoutMs);
+        omni.setSetting('llmEnabled', 'true');
+        await omni.reloadLLM();
+        console.log(`Local LLM enabled (${f.provider}).`);
+        break;
+      }
+      case 'disable':
+        omni.setSetting('llmEnabled', 'false');
+        await omni.reloadLLM();
+        console.log('Local LLM disabled.');
+        break;
+      default:
+        console.error('Usage: omnimind config llm status|enable|disable');
+        process.exit(1);
+    }
+  } finally {
+    await omni.close();
+  }
+}
+
+async function summarizeCommand(args: string[]): Promise<void> {
+  const text = args[0];
+  if (!text) {
+    console.error('Usage: omnimind summarize "<text>" [--max-words N]');
+    process.exit(1);
+  }
+  const maxWordsFlag = parseFlag(args, '--max-words');
+  const maxWords = maxWordsFlag !== null ? parseInt(maxWordsFlag, 10) : 80;
+  if (Number.isNaN(maxWords) || maxWords < 10 || maxWords > 500) {
+    console.error('Error: --max-words must be an integer between 10 and 500');
+    process.exit(1);
+  }
+  const omni = await Omnimind.create({
+    adapters: false,
+    dataDir: process.env.OMNIMIND_DATA_DIR ?? undefined,
+  });
+  try {
+    await omni.reloadLLM();
+    const provider = omni.llm;
+    if (!provider.isConfigured()) {
+      console.error(
+        'LLM not configured. Enable it in Settings → Local LLM, or run: omnimind config llm enable',
+      );
+      process.exit(1);
+    }
+    const result = await provider.summarize(text, { maxWords });
+    if (!result.ok) {
+      console.error(`Error: ${llmErrorMessage(result.error)}`);
+      process.exit(1);
+    }
+    console.log(result.value);
+  } finally {
+    await omni.close();
   }
 }
 

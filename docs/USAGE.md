@@ -177,3 +177,26 @@ Both engines produce the same canonical entity ids (`entity_<normalized name>`),
 - **Import:** `POST /api/import` with a previously exported JSON.
 - **Privacy:** memories never leave your machine and are not in the git repository. The DB is encrypted at rest (machine-bound key by default; optional passphrase for portability across machines).
 - **Deleting everything:** `omnimind wipe --yes-i-am-sure`.
+
+---
+
+## 10. Local LLM
+
+Optional local summarization via Ollama or LM Studio — **off by default**. Enable it from the **Settings → Local LLM** card (GUI) or the CLI. Only loopback URLs are allowed, and Omnimind never pulls or downloads models — the model must already be running locally.
+
+```bash
+# Status / config
+omnimind config llm status
+
+# Enable
+omnimind config llm enable --provider ollama --base-url http://127.0.0.1:11434 --model qwen2.5:3b
+omnimind config llm enable --provider lmstudio --base-url http://127.0.0.1:1234/v1
+
+# Disable
+omnimind config llm disable
+
+# Summarize text directly
+omnimind summarize "long text to condense" --max-words 100
+```
+
+Flags: `config llm enable` accepts `--provider <ollama|lmstudio>` (required) and optional `--base-url`, `--model`, `--timeout-ms`. `summarize` accepts `--max-words` (default 80, range 10–500). The same capability is exposed to AI agents as the MCP tool `omnimind_summarize`.

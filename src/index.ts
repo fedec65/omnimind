@@ -75,6 +75,20 @@ import { configureNerEngine, getNerEngineInfo, initNerEngine, type NerEngineInfo
 import { type Prediction } from './prediction/IntentPredictor.js';
 import { McpSharedClient } from './shared/McpSharedClient.js';
 import type { SharedClient, SharedError, SharedSearchResult, SharedStatus, SharedSuggestion, SharedToolTransport } from './shared/types.js';
+import {
+  type LLMProvider,
+  type LLMConfig,
+  type LLMConfigPublic,
+  type LLMStatus,
+  type LLMError,
+  type LLMMessage,
+  type LLMSummaryOptions,
+  NullProvider,
+  OllamaProvider,
+  LMStudioProvider,
+  assertLoopback,
+  llmErrorMessage,
+} from './core/llm/index.js';
 
 // ─── Configuration ────────────────────────────────────────────────
 
@@ -98,6 +112,21 @@ export interface OmnimindConfig {
    * sharedEnabled/sharedServerUrl/sharedToken settings.
    */
   sharedTransport?: SharedToolTransport | undefined;
+  /**
+   * Local LLM provider configuration (Ollama or LM Studio). Boot-time
+   * override for the persisted `llm*` settings; env vars (`OMNIMIND_LLM_*`)
+   * win over this when set. Provider stays NullProvider until the user
+   * enables it via Settings or the boot config.
+   */
+  llm?:
+    | {
+        enabled: boolean;
+        provider?: 'ollama' | 'lmstudio' | undefined;
+        baseUrl?: string | undefined;
+        model?: string | undefined;
+        timeoutMs?: number | undefined;
+      }
+    | undefined;
   /** Startup progress hook — called with coarse phases: 'store', 'bus', 'ready' */
   onProgress?: ((phase: string) => void) | undefined;
 }
@@ -122,6 +151,12 @@ export class Omnimind {
   private sharedSuggestions: SharedSuggestion[] = [];
   private sharedCache: { key: string; text: string; at: number } | null = null;
   private readonly patternStore: PatternStore;
+  private _llm: LLMProvider = new NullProvider();
+
+  /** Active local LLM provider (NullProvider until enabled). */
+  get llm(): LLMProvider {
+    return this._llm;
+  }
 
   private constructor(
     store: MemoryStore,
@@ -302,6 +337,56 @@ export class Omnimind {
       }
       omni.sharedSuggestions = reconciled.slice(0, 20);
     }
+
+    // ─── Local LLM provider (boot-time precedence) ─────────────
+    // Boot config (config.llm) seeds settings; env vars (OMNIMIND_LLM_*)
+    // win when set. Reload the provider at the end so the boot-time state
+    // is honored exactly once, with no race against user-saved settings.
+    const bootLlm = config.llm;
+    const envEnabled = process.env.OMNIMIND_LLM_ENABLED;
+    const envProvider = process.env.OMNIMIND_LLM_PROVIDER;
+    const envUrl = process.env.OMNIMIND_LLM_BASE_URL;
+    const envModel = process.env.OMNIMIND_LLM_MODEL;
+    const envTimeout = process.env.OMNIMIND_LLM_TIMEOUT_MS;
+    const hasAnyEnvLlm =
+      envEnabled !== undefined ||
+      envProvider !== undefined ||
+      envUrl !== undefined ||
+      envModel !== undefined ||
+      envTimeout !== undefined;
+
+    if (bootLlm !== undefined || hasAnyEnvLlm) {
+      const enabled = envEnabled !== undefined ? envEnabled === 'true' : bootLlm?.enabled;
+      if (enabled !== undefined) {
+        store.setSetting('llmEnabled', enabled ? 'true' : 'false');
+      }
+
+      const provider = envProvider ?? bootLlm?.provider;
+      if (provider !== undefined) {
+        store.setSetting('llmProvider', provider as string);
+      }
+
+      const baseUrl = envUrl ?? bootLlm?.baseUrl;
+      if (baseUrl !== undefined) {
+        store.setSetting('llmBaseUrl', baseUrl as string);
+      }
+
+      const model = envModel ?? bootLlm?.model;
+      if (model !== undefined) {
+        store.setSetting('llmModel', model as string);
+      }
+
+      const timeoutMs =
+        envTimeout !== undefined
+          ? envTimeout
+          : bootLlm?.timeoutMs !== undefined
+            ? String(bootLlm.timeoutMs)
+            : undefined;
+      if (timeoutMs !== undefined) {
+        store.setSetting('llmTimeoutMs', timeoutMs);
+      }
+    }
+    await omni.reloadLLM();
 
     // Auto-evict stale memories on startup (configurable via setting)
     const autoEvictSetting = omni.getSetting('autoEvictDays');
@@ -940,6 +1025,103 @@ export class Omnimind {
     }
   }
 
+  // ─── Local LLM Provider ──────────────────────────────────────────
+
+  /**
+   * Public LLM config (what the Settings panel renders). Reads the
+   * persisted settings, with the resolved `provider` and `baseUrl` and
+   * `model` reflected as null when the LLM is disabled. Mirrors
+   * reloadShared's read-from-settings shape.
+   */
+  getLLMConfig(): LLMConfigPublic {
+    const enabled = this.memoryStore.getSetting('llmEnabled');
+    const provider = this.memoryStore.getSetting('llmProvider');
+    const baseUrl = this.memoryStore.getSetting('llmBaseUrl');
+    const model = this.memoryStore.getSetting('llmModel');
+    const timeoutMs = this.memoryStore.getSetting('llmTimeoutMs');
+
+    const isEnabled = enabled.ok && enabled.value === 'true';
+    const resolvedProvider = isEnabled && provider.ok && provider.value !== null
+      && (provider.value === 'ollama' || provider.value === 'lmstudio')
+      ? provider.value
+      : null;
+
+    const resolvedModel = model.ok && model.value !== null && model.value.length > 0
+      ? model.value
+      : null;
+
+    return {
+      enabled: isEnabled,
+      provider: resolvedProvider,
+      baseUrl: baseUrl.ok && baseUrl.value !== null && baseUrl.value.length > 0
+        ? baseUrl.value
+        : null,
+      model: resolvedProvider === 'ollama' && resolvedModel === null
+        ? 'qwen2.5:3b'
+        : resolvedModel,
+      timeoutMs: timeoutMs.ok && timeoutMs.value !== null
+        ? parseInt(timeoutMs.value, 10) || 30_000
+        : 30_000,
+    };
+  }
+
+  /**
+   * Live status combining the current config with a connectivity probe.
+   * Returns `reachable: false` and a human-readable error when the
+   * provider is unconfigured or the probe fails — never throws.
+   */
+  async getLLMStatus(): Promise<LLMStatus> {
+    const cfg = this.getLLMConfig();
+    if (!cfg.enabled || cfg.provider === null) {
+      return {
+        configured: false,
+        provider: 'null',
+        reachable: false,
+      };
+    }
+    const base: LLMStatus = {
+      configured: this._llm.isConfigured(),
+      provider: this._llm.name,
+      reachable: false,
+    };
+    const start = Date.now();
+    const probe = await this._llm.health();
+    if (!probe.ok) {
+      return {
+        ...base,
+        ...(cfg.baseUrl !== null ? { baseUrl: cfg.baseUrl } : {}),
+        ...(cfg.model !== null ? { model: cfg.model } : {}),
+        error: llmErrorMessage(probe.error),
+      };
+    }
+    return {
+      ...base,
+      ...(cfg.baseUrl !== null ? { baseUrl: cfg.baseUrl } : {}),
+      ...(cfg.model !== null ? { model: cfg.model } : {}),
+      reachable: true,
+      latencyMs: Date.now() - start,
+    };
+  }
+
+  /**
+   * Rebuild the LLM provider from current settings. Called when the LLM
+   * settings change at runtime (GUI Settings save, CLI enable/disable), so
+   * no restart is required. Best-effort: invalid config (missing model,
+   * non-loopback URL) silently falls back to NullProvider and logs once.
+   * Mirrors reloadShared().
+   */
+  async reloadLLM(): Promise<void> {
+    const built = buildLLMConfig(this.getLLMConfig());
+    if (!built.ok) {
+      if (built.reason !== null) {
+        console.warn(`[Omnimind] ${built.reason} — falling back to NullProvider.`);
+      }
+      this._llm = new NullProvider();
+      return;
+    }
+    this._llm = createProvider(built.value);
+  }
+
   /** Local L2/L3 memories pending a publish decision (max 20, 24h TTL). */
   getSharedSuggestions(): SharedSuggestion[] {
     const cutoff = Date.now() - TimeConstants.DAY;
@@ -1106,6 +1288,60 @@ export {
   type SharedToolTransport,
 } from './shared/types.js';
 
+// ─── Local LLM helpers (module-local, not exported) ──────────────
+
+/**
+ * Validate a `LLMConfigPublic` and turn it into a `LLMConfig` ready for
+ * a concrete provider. Returns `{ ok: true, value }` on success, or
+ * `{ ok: false, reason }` where `reason === null` means the LLM is
+ * intentionally disabled (silent no-op in `reloadLLM`).
+ *
+ * Module-local: only `reloadLLM` consumes this. LM Studio may omit the
+ * model (autodetected via `health()`); Ollama requires a model up front.
+ */
+function buildLLMConfig(
+  cfg: LLMConfigPublic,
+): { ok: true; value: LLMConfig } | { ok: false; reason: string | null } {
+  if (!cfg.enabled) return { ok: false, reason: null };
+  if (cfg.provider === null) return { ok: false, reason: 'LLM enabled but provider unset' };
+
+  // Provider-specific defaults: Ollama ships with a documented fallback;
+  // LM Studio autodetects via health() when model is omitted.
+  let model = cfg.model;
+  if (model === null && cfg.provider === 'ollama') {
+    model = 'qwen2.5:3b';
+  }
+  if (model === null) {
+    return { ok: false, reason: 'LLM model missing' };
+  }
+
+  // Provider-specific default when the user never set a base URL (spec:
+  // defaults filled here, not in getLLMConfig).
+  const resolvedBaseUrl = cfg.baseUrl ?? (cfg.provider === 'lmstudio' ? 'http://127.0.0.1:1234/v1' : 'http://127.0.0.1:11434');
+  const guard = assertLoopback(resolvedBaseUrl);
+  if (!guard.ok) {
+    return { ok: false, reason: `LLM guard failed: ${llmErrorMessage(guard.error)}` };
+  }
+
+  return {
+    ok: true,
+    value: {
+      provider: cfg.provider,
+      baseUrl: guard.value,
+      model,
+      timeoutMs: cfg.timeoutMs,
+    },
+  };
+}
+
+/**
+ * Build the concrete `LLMProvider` for a resolved `LLMConfig`.
+ * Module-local: only `reloadLLM` consumes this.
+ */
+function createProvider(cfg: LLMConfig): LLMProvider {
+  return cfg.provider === 'ollama' ? new OllamaProvider(cfg) : new LMStudioProvider(cfg);
+}
+
 // ─── Convenience Exports ──────────────────────────────────────────
 
 export {
@@ -1129,4 +1365,11 @@ export type {
   Result,
   Prediction,
   NerEngineInfo,
+  LLMProvider,
+  LLMConfig,
+  LLMConfigPublic,
+  LLMStatus,
+  LLMError,
+  LLMMessage,
+  LLMSummaryOptions,
 };

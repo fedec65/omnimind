@@ -20,6 +20,8 @@
  *   POST /api/import          { json }
  *   GET  /api/export
  *   POST /api/age
+ *   GET  /api/llm
+ *   GET  /api/llm/status
  */
 
 import { createServer, type IncomingMessage, type ServerResponse } from 'http';
@@ -488,9 +490,30 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
         // work without a restart.
         await omni!.reloadShared();
       }
+      if (
+        key === 'llmEnabled' || key === 'llmProvider' ||
+        key === 'llmBaseUrl' || key === 'llmModel' || key === 'llmTimeoutMs'
+      ) {
+        // Rebuild the LLM provider from the new settings — summarization
+        // must work without a restart.
+        await omni!.reloadLLM();
+      }
       sendJson(res, 200, { ok: true });
       return;
     }
+  }
+
+  // Local LLM config + status (for the GUI Settings "Local LLM" card).
+  if (path === '/api/llm' && method === 'GET') {
+    const config = omni!.getLLMConfig();
+    const status = await omni!.getLLMStatus();
+    sendJson(res, 200, { config, status });
+    return;
+  }
+  if (path === '/api/llm/status' && method === 'GET') {
+    const status = await omni!.getLLMStatus();
+    sendJson(res, 200, status);
+    return;
   }
 
   // Shared server connectivity test — builds an ad-hoc client from either the

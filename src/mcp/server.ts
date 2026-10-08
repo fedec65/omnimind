@@ -56,6 +56,11 @@ import { URLSearchParams, pathToFileURL } from 'node:url';
 import { NamespaceRegistry } from './namespace.js';
 import { compressContext } from '../prediction/ContextCompressor.js';
 import { ContextInjector } from '../prediction/ContextInjector.js';
+import {
+  SummarizeInputSchema,
+  buildSummarizeResult,
+  SUMMARIZE_TOOL_NAME,
+} from './summarizeTool.js';
 
 // ─── Schemas ──────────────────────────────────────────────────────
 
@@ -279,6 +284,12 @@ export class OmnimindMcpServer {
           description: 'Check connectivity and statistics of the shared team/org memory server.',
           inputSchema: { type: 'object', properties: {} },
         },
+        {
+          name: SUMMARIZE_TOOL_NAME,
+          description:
+            'Summarize a text snippet with the configured local LLM (Ollama or LM Studio). Requires the Local LLM feature enabled in Settings.',
+          inputSchema: convertZodToJsonSchema(SummarizeInputSchema),
+        },
       ],
     }));
 
@@ -308,6 +319,8 @@ export class OmnimindMcpServer {
             return await this.handleSharedPublish(request.params.arguments);
           case 'omnimind_shared_status':
             return await this.handleSharedStatus();
+          case SUMMARIZE_TOOL_NAME:
+            return await this.handleSummarize(request.params.arguments);
           default:
             throw new Error(`Unknown tool: ${request.params.name}`);
         }
@@ -984,6 +997,33 @@ export class OmnimindMcpServer {
           text: `Shared server OK — ${result.value.items} items visible (${result.value.superseded} superseded).`,
         },
       ],
+    };
+  }
+
+  private async handleSummarize(args: unknown) {
+    const input = SummarizeInputSchema.parse(args);
+    if (!this.omni) {
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: 'Error: MCP server not initialized',
+          },
+        ],
+        isError: true,
+      };
+    }
+
+    await this.omni.reloadLLM();
+    const result = await buildSummarizeResult(input, this.omni.llm);
+    return {
+      content: [
+        {
+          type: 'text' as const,
+          text: JSON.stringify(result),
+        },
+      ],
+      ...(result.ok ? {} : { isError: true }),
     };
   }
 }
