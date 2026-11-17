@@ -19,15 +19,17 @@ export interface LLMSummaryOptions {
 
 /** Resolved provider configuration after defaults + loopback validation. */
 export interface LLMConfig {
-  readonly provider: 'ollama' | 'lmstudio';
+  readonly provider: 'ollama' | 'lmstudio' | 'openai';
   readonly baseUrl: string;
   readonly model: string;
   readonly timeoutMs: number;
+  /** Bearer key for an OpenAI-compatible gateway; only from the environment, never a setting. */
+  readonly apiKey?: string | undefined;
 }
 
 /** A swappable local LLM provider. */
 export interface LLMProvider {
-  readonly name: 'null' | 'ollama' | 'lmstudio';
+  readonly name: 'null' | 'ollama' | 'lmstudio' | 'openai';
   isConfigured(): boolean;
   summarize(text: string, opts?: LLMSummaryOptions | undefined): Promise<Result<string, import('./errors.js').LLMError>>;
   health(): Promise<Result<true, import('./errors.js').LLMError>>;
@@ -36,7 +38,7 @@ export interface LLMProvider {
 /** Public config exposed to the GUI (what Settings shows). */
 export interface LLMConfigPublic {
   readonly enabled: boolean;
-  readonly provider: 'ollama' | 'lmstudio' | null;
+  readonly provider: 'ollama' | 'lmstudio' | 'openai' | null;
   readonly model: string | null;
   readonly baseUrl: string | null;
   readonly timeoutMs: number;
@@ -45,7 +47,7 @@ export interface LLMConfigPublic {
 /** Live status combining config with a connectivity probe. */
 export interface LLMStatus {
   readonly configured: boolean;
-  readonly provider: 'null' | 'ollama' | 'lmstudio';
+  readonly provider: 'null' | 'ollama' | 'lmstudio' | 'openai';
   readonly baseUrl?: string | undefined;
   readonly model?: string | undefined;
   readonly reachable: boolean;

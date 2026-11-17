@@ -33,6 +33,7 @@ import { fileURLToPath } from 'url';
 import { Omnimind } from './index.js';
 import { resolveBindHost } from './serverHost.js';
 import { McpSharedClient } from './shared/McpSharedClient.js';
+import { memoriesToMarkdown } from './export/markdown.js';
 import { buildFingerprint, resolveGitBranch } from './prediction/IntentPredictor.js';
 import { type EntityType } from './core/types.js';
 import {
@@ -647,7 +648,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
     });
     if (!result.ok) {
       const msg = result.error.message;
-      const notFound = msg.startsWith('Memory not found') || msg.startsWith('Only L2/L3');
+      const notFound = msg.startsWith('Memory not found');
       sendJson(res, notFound ? 404 : 502, { error: msg });
       return;
     }
@@ -770,6 +771,25 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
   }
 
   // Export memories to JSON
+  // A readable copy of everything, as one Markdown file: wing / room headings,
+  // one bullet per memory with its date. Kept beside the JSON export (which
+  // re-imports); this one is for reading, filing and backing up.
+  if (path === '/api/export.md' && method === 'GET') {
+    const result = omni!.exportToJson();
+    if (!result.ok) {
+      sendJson(res, 500, { error: result.error.message });
+      return;
+    }
+    const data = JSON.parse(result.value) as { memories?: Array<Record<string, unknown>> };
+    const md = memoriesToMarkdown(data.memories ?? []);
+    res.writeHead(200, {
+      'Content-Type': 'text/markdown; charset=utf-8',
+      'Content-Disposition': `attachment; filename="my-memory-${new Date().toISOString().slice(0, 10)}.md"`,
+    });
+    res.end(md);
+    return;
+  }
+
   if (path === '/api/export' && method === 'GET') {
     const result = omni!.exportToJson();
     if (!result.ok) {
@@ -932,3 +952,4 @@ main().catch((err) => {
   console.error('[Server] Fatal error:', err);
   process.exit(1);
 });
+

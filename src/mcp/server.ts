@@ -209,13 +209,35 @@ export class OmnimindMcpServer {
     console.error('[Omnimind MCP] Server running on stdio');
   }
 
+  /**
+   * Moves memories written under derived `ag-` namespaces into the pinned one,
+   * once per start: memories stored before the namespace was pinned (or by an
+   * older agent version) stay findable. Other user-set namespaces are kept.
+   */
+  private async adoptNamespaces(pinned: string): Promise<void> {
+    if (this.adopted) return;
+    this.adopted = true;
+    const r = this.omni?.memoryStore.reassignNamespaces('ag-', pinned);
+    if (r && r.ok && r.value > 0) {
+      console.error(`[Omnimind MCP] Moved ${r.value} memories into namespace ${pinned}`);
+    }
+  }
+  private adopted = false;
+
   private setupHandlers(): void {
     // Bind client identity -> namespace from the initialize handshake.
     // Per MCP spec this is the first request on a connection; the binding
     // is then stable for the rest of the connection's lifetime.
     this.server.setRequestHandler(InitializeRequestSchema, async (request) => {
       const info = request.params.clientInfo;
-      this.clientNamespace = OmnimindMcpServer.registry.register(this.instanceId, info);
+      // A deployment that gives one agent its own omnimind (the sandsiv harness:
+      // one VM per person) pins the namespace: the derived one includes the
+      // client's version, so every agent update would start an empty namespace.
+      const pinned = process.env.OMNIMIND_NAMESPACE?.trim();
+      this.clientNamespace = pinned
+        ? OmnimindMcpServer.registry.bind(this.instanceId, pinned)
+        : OmnimindMcpServer.registry.register(this.instanceId, info);
+      if (pinned) await this.adoptNamespaces(pinned);
       console.error(
         `[Omnimind MCP] Client bound to namespace: ${this.clientNamespace} (client: ${info?.name ?? 'unknown'})`,
       );
@@ -457,6 +479,9 @@ export class OmnimindMcpServer {
 
   private async handlePredict(args: unknown) {
     const input = PredictInput.parse(args);
+    // What the agent is working on now: what it reads and stores next is
+    // learnt for this project and branch.
+    this.omni?.activityTracker.setProjectContext(input.projectPath, input.gitBranch);
 
     const fingerprint = buildFingerprint({
       projectPath: input.projectPath,

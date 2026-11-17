@@ -67,6 +67,12 @@ export class NamespaceRegistry {
     return namespace;
   }
 
+  /** Bind an instanceId to an explicit namespace (OMNIMIND_NAMESPACE). */
+  bind(instanceId: string, namespace: string): string {
+    this.bindings.set(instanceId, namespace);
+    return namespace;
+  }
+
   /** Look up the namespace for a previously registered instance. */
   lookup(instanceId: string): string | undefined {
     return this.bindings.get(instanceId);
