@@ -117,4 +117,18 @@ describe('HTTP Server', () => {
     const res = await fetch(`http://localhost:${port}/api/unknown`);
     expect(res.status).toBe(404);
   });
+  it('never serves a file outside the GUI build (a browser can reach it now)', async () => {
+    const { request } = await import('node:http');
+    // Raw request: fetch() would normalise the dots away.
+    const body = await new Promise<string>((resolve, reject) => {
+      const req = request({ host: '127.0.0.1', port, path: '/../../package.json', method: 'GET' }, (res) => {
+        let data = '';
+        res.on('data', (c) => (data += c));
+        res.on('end', () => resolve(data));
+      });
+      req.on('error', reject);
+      req.end();
+    });
+    expect(body).not.toContain('"name": "omnimind"');
+  });
 });
