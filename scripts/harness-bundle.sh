@@ -23,4 +23,4 @@ docker run --rm -v "$WORK/src":/src:ro -v "$PWD":/out debian:12 \
   tar czf "/out/$(basename "$OUT")" --owner=0 --group=0 --exclude=./.git -C /src .
 echo "$OUT"
 shasum -a 256 "$OUT" | cut -d' ' -f1
-echo "publish: gh release create tino-$SHORT -R Anathapindika/omnimind --target $COMMIT $(basename "$OUT")"
+echo "publish: gh release create tino-$SHORT -R fedec65/omnimind --prerelease --target $COMMIT $(basename "$OUT")"
