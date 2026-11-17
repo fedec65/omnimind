@@ -588,6 +588,26 @@ export class MemoryStore {
   }
 
   /** Get all memory IDs (for bulk operations like aging) */
+  /**
+   * Moves every memory (and archived memory) whose namespace starts with
+   * `prefix` into `target`. Returns the number of live memories moved.
+   */
+  reassignNamespaces(prefix: string, target: string): Result<number> {
+    if (!this.initialized) return err(new Error('Store not initialized'));
+    try {
+      const like = `${prefix.replace(/[%_\\]/g, '\\$&')}%`;
+      const moved = this.db!.prepare(
+        "UPDATE memories SET namespace = ? WHERE namespace LIKE ? ESCAPE '\\' AND namespace != ?",
+      ).run(target, like, target);
+      this.db!.prepare(
+        "UPDATE memories_archive SET namespace = ? WHERE namespace LIKE ? ESCAPE '\\' AND namespace != ?",
+      ).run(target, like, target);
+      return ok(moved.changes);
+    } catch (error) {
+      return err(error instanceof Error ? error : new Error(String(error)));
+    }
+  }
+
   getAllMemoryIds(): Result<string[]> {
     if (!this.initialized) return err(new Error('Store not initialized'));
     try {

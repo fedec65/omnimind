@@ -160,9 +160,21 @@ export class ActivityTracker {
    * This is the primary entry point — call this whenever you want
    * to predict what memories the user might need.
    */
+  /**
+   * The project an agent says it works in (the MCP server runs in one fixed
+   * directory, so its own cwd says nothing): later accesses and stores learn
+   * for this project and branch, and predict() can match them.
+   */
+  setProjectContext(projectPath: string, gitBranch?: string | undefined): void {
+    this.projectOverride = projectPath;
+    this.cachedGitBranch = gitBranch ?? resolveGitBranch(projectPath);
+    this.gitBranchCacheTime = Date.now();
+  }
+  private projectOverride: string | null = null;
+
   getCurrentFingerprint(): ContextFingerprint {
     const now = new Date();
-    const projectPath = this.config.watchDir;
+    const projectPath = this.projectOverride ?? this.config.watchDir;
 
     // Derive file extension from most recent file, if any
     const recentFile = this.window.files[this.window.files.length - 1] ?? '';
@@ -273,7 +285,7 @@ export class ActivityTracker {
       return this.cachedGitBranch;
     }
 
-    this.cachedGitBranch = resolveGitBranch(this.config.watchDir);
+    this.cachedGitBranch = resolveGitBranch(this.projectOverride ?? this.config.watchDir);
     this.gitBranchCacheTime = now;
     return this.cachedGitBranch;
   }

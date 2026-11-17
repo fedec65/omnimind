@@ -184,6 +184,23 @@
     }
   }
 
+  // A readable copy for backing up: one Markdown file, downloaded by the browser.
+  async function handleExportMarkdown() {
+    try {
+      const text = await api.exportMarkdown();
+      const url = URL.createObjectURL(new Blob([text], { type: 'text/markdown' }));
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `my-memory-${new Date().toISOString().slice(0, 10)}.md`;
+      a.click();
+      URL.revokeObjectURL(url);
+      actionMsg = 'Export downloaded';
+      setTimeout(() => (actionMsg = null), 3000);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Export failed');
+    }
+  }
+
   async function handleAge() {
     isAging = true;
     actionMsg = null;
@@ -589,6 +606,9 @@
           </label>
           <button onclick={handleExport} class="px-5 py-2.5 bg-[var(--surface)] border border-[var(--border)] text-sm rounded-lg hover:bg-[var(--surface-hover)] transition-colors">
             Export Memories
+          </button>
+          <button onclick={handleExportMarkdown} class="px-5 py-2.5 bg-[var(--surface)] border border-[var(--border)] text-sm rounded-lg hover:bg-[var(--surface-hover)] transition-colors" data-testid="export-markdown">
+            Export as Markdown
           </button>
           <button onclick={handleAge} disabled={isAging} class="px-5 py-2.5 bg-[var(--surface)] border border-[var(--border)] text-sm rounded-lg hover:bg-[var(--surface-hover)] transition-colors disabled:opacity-50">
             {isAging ? 'Aging...' : 'Age Memories Now'}

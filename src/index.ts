@@ -86,6 +86,7 @@ import {
   NullProvider,
   OllamaProvider,
   LMStudioProvider,
+  OpenAICompatibleProvider,
   assertLoopback,
   llmErrorMessage,
 } from './core/llm/index.js';
@@ -121,7 +122,7 @@ export interface OmnimindConfig {
   llm?:
     | {
         enabled: boolean;
-        provider?: 'ollama' | 'lmstudio' | undefined;
+        provider?: 'ollama' | 'lmstudio' | 'openai' | undefined;
         baseUrl?: string | undefined;
         model?: string | undefined;
         timeoutMs?: number | undefined;
@@ -1053,7 +1054,7 @@ export class Omnimind {
 
     const isEnabled = enabled.ok && enabled.value === 'true';
     const resolvedProvider = isEnabled && provider.ok && provider.value !== null
-      && (provider.value === 'ollama' || provider.value === 'lmstudio')
+      && (provider.value === 'ollama' || provider.value === 'lmstudio' || provider.value === 'openai')
       ? provider.value
       : null;
 
@@ -1159,14 +1160,19 @@ export class Omnimind {
     if (!mem.value) return err(new Error(`Memory not found: ${id}`));
 
     const memory = mem.value;
-    if (memory.layer !== MemoryLayer.Concept && memory.layer !== MemoryLayer.Wisdom) {
-      return err(new Error(`Only L2/L3 memories can be published (memory is L${memory.layer})`));
-    }
+    // Publishing is the person's explicit action: any layer may go. A fact
+    // still raw (L0) or compressed (L1) is shared as a single finding
+    // (level 2); the shared server screens it like any other write.
+    const level: 2 | 3 = memory.layer === MemoryLayer.Wisdom ? 3 : 2;
 
     const result = await this.shared.publish({
-      level: memory.layer,
+      level,
       visibility: opts.visibility,
       content: memory.content,
+      metadata: {
+        topic: [memory.wing, memory.room].filter((x) => x && x !== 'default').join(' / ') || 'personal',
+        source: 'conversation',
+      },
       ...(opts.workspaceId !== undefined ? { workspaceId: opts.workspaceId } : {}),
       ...(opts.trustWeight !== undefined ? { trustWeight: opts.trustWeight } : {}),
     });
@@ -1329,18 +1335,35 @@ function buildLLMConfig(
   // Provider-specific default when the user never set a base URL (spec:
   // defaults filled here, not in getLLMConfig).
   const resolvedBaseUrl = cfg.baseUrl ?? (cfg.provider === 'lmstudio' ? 'http://127.0.0.1:1234/v1' : 'http://127.0.0.1:11434');
-  const guard = assertLoopback(resolvedBaseUrl);
-  if (!guard.ok) {
-    return { ok: false, reason: `LLM guard failed: ${llmErrorMessage(guard.error)}` };
+  // Local only, unless the deployment itself allows a gateway: the setting
+  // cannot be flipped from the GUI, only by the environment that runs omnimind.
+  const allowRemote = cfg.provider === 'openai' && process.env.OMNIMIND_LLM_ALLOW_REMOTE === 'true';
+  let baseUrl: string;
+  if (allowRemote) {
+    try {
+      const u = new URL(resolvedBaseUrl);
+      if (u.protocol !== 'http:' && u.protocol !== 'https:') return { ok: false, reason: 'LLM URL must be http(s)' };
+      baseUrl = u.toString();
+    } catch {
+      return { ok: false, reason: `invalid LLM URL: ${resolvedBaseUrl}` };
+    }
+  } else {
+    const guard = assertLoopback(resolvedBaseUrl);
+    if (!guard.ok) {
+      return { ok: false, reason: `LLM guard failed: ${llmErrorMessage(guard.error)}` };
+    }
+    baseUrl = guard.value;
   }
+  const apiKey = process.env.OMNIMIND_LLM_API_KEY?.trim();
 
   return {
     ok: true,
     value: {
       provider: cfg.provider,
-      baseUrl: guard.value,
+      baseUrl,
       model,
       timeoutMs: cfg.timeoutMs,
+      ...(apiKey ? { apiKey } : {}),
     },
   };
 }
@@ -1350,6 +1373,7 @@ function buildLLMConfig(
  * Module-local: only `reloadLLM` consumes this.
  */
 function createProvider(cfg: LLMConfig): LLMProvider {
+  if (cfg.provider === 'openai') return new OpenAICompatibleProvider(cfg);
   return cfg.provider === 'ollama' ? new OllamaProvider(cfg) : new LMStudioProvider(cfg);
 }
 

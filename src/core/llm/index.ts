@@ -17,3 +17,4 @@ export { httpRequest, type HttpRequestOptions } from './httpRequest.js';
 export { NullProvider } from './NullProvider.js';
 export { OllamaProvider } from './OllamaProvider.js';
 export { LMStudioProvider } from './LMStudioProvider.js';
+export { OpenAICompatibleProvider } from './OpenAICompatibleProvider.js';

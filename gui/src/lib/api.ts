@@ -331,6 +331,12 @@ export const api = {
       body: JSON.stringify({ json }),
     }),
 
+  exportMarkdown: async (): Promise<string> => {
+    const res = await fetch(`${await getBaseUrl()}/api/export.md`);
+    if (!res.ok) throw new Error(`Export failed: ${res.status}`);
+    return res.text();
+  },
+
   exportMemories: () =>
     fetchJson<{ version: string; exportedAt: number; memories: unknown[] }>('/api/export'),
 

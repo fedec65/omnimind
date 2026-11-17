@@ -2,7 +2,7 @@
   import { setError } from '../stores.svelte.ts';
   import { api } from '../api';
   import type { SearchResult } from '../api';
-  import { Pin, Pencil } from '@lucide/svelte';
+  import { Pin, Pencil, CloudUpload } from '@lucide/svelte';
 
   let { result }: { result: SearchResult } = $props();
   const m = $derived(result.memory);
@@ -10,6 +10,23 @@
   const layerColors = ['bg-blue-500/20 text-blue-300', 'bg-amber-500/20 text-amber-300', 'bg-purple-500/20 text-purple-300', 'bg-emerald-500/20 text-emerald-300'];
 
   let isEditing = $state(false);
+  let sharing = $state(false);
+  let shared = $state(false);
+
+  // The person's explicit choice: the item goes to the company-wide memory,
+  // where the server screens it (duplicates, secrets, text aimed at agents).
+  async function shareMemory() {
+    if (!confirm('Share this memory with everyone at the company? It goes to the shared memory, where every colleague and agent can find it.')) return;
+    sharing = true;
+    try {
+      await api.sharedPublish(m.id, 'org');
+      shared = true;
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Sharing failed');
+    } finally {
+      sharing = false;
+    }
+  }
   let editContent = $state('');
   let editWing = $state('');
   let editRoom = $state('');
@@ -116,6 +133,15 @@
         </div>
       </div>
       <div class="flex items-center gap-1">
+        <button
+          onclick={shareMemory}
+          disabled={sharing || shared}
+          class="text-[var(--text-muted)] hover:text-[var(--accent)] text-xs px-2 py-1 rounded transition-colors disabled:opacity-60"
+          title={shared ? 'Shared with the company' : 'Share with the company'}
+          data-testid="share-memory"
+        >
+          {#if shared}✓{:else}<CloudUpload size={12} />{/if}
+        </button>
         <button
           onclick={startEdit}
           class="text-[var(--text-muted)] hover:text-[var(--accent)] text-xs px-2 py-1 rounded transition-colors"

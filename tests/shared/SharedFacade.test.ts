@@ -112,19 +112,27 @@ describe('Omnimind facade — shared server wiring', () => {
     await omni.close();
   });
 
-  it('publishMemoryToShared rejects L0 memories', async () => {
+  it('publishMemoryToShared shares a fresh (L0) memory as a level-2 finding, with topic and source', async () => {
+    // Sharing is the person's explicit action; the shared server screens it.
     const fake = new FakeTransport();
+    fake.enqueueText('{"id":"published-2"}');
+    fake.enqueueText('{"id":"published-3"}');
     const omni = await Omnimind.create({ dataDir: tmpDir, adapters: false, sharedTransport: fake });
 
-    const stored = await omni.store('Fresh verbatim memory', { wing: 'eng' });
-    expect(stored.ok).toBe(true);
-    if (!stored.ok) return;
+    const fresh = await omni.store('Fresh verbatim memory', { wing: 'sales', room: 'bosch' });
+    if (!fresh.ok) throw fresh.error;
+    const r = await omni.publishMemoryToShared(fresh.value.id, { visibility: 'org' });
+    expect(r.ok).toBe(true);
+    expect(fake.calls[0]!.args).toMatchObject({
+      level: 2, visibility: 'org', content: 'Fresh verbatim memory',
+      metadata: { topic: 'sales / bosch', source: 'conversation' },
+    });
 
-    const result = await omni.publishMemoryToShared(stored.value.id, { visibility: 'org' });
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.error.message).toContain('L2/L3');
-    expect(fake.calls.length).toBe(0);
+    const wise = await omni.store('Distilled wisdom', { wing: 'eng' });
+    if (!wise.ok) throw wise.error;
+    await omni.memoryStore.update(wise.value.id, { layer: 3 });
+    await omni.publishMemoryToShared(wise.value.id, { visibility: 'org' });
+    expect(fake.calls[1]!.args).toMatchObject({ level: 3 });
     await omni.close();
   });
 
