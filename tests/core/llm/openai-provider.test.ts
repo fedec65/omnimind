@@ -16,6 +16,9 @@ describe('OpenAICompatibleProvider (company gateway, person\'s own key)', () => 
         seen.push({ path: req.url ?? '', auth: req.headers.authorization, body });
         res.setHeader('content-type', 'application/json');
         if (req.url === '/v1/models') return res.end(JSON.stringify({ data: [{ id: 'MiniMax-M3.1-Flash' }] }));
+        if (body.includes('THINK-FOREVER')) {
+          return res.end(JSON.stringify({ choices: [{ finish_reason: 'length', message: { role: 'assistant', reasoning_content: 'counting words...' } }] }));
+        }
         res.end(JSON.stringify({ choices: [{ message: { content: '<think>plan</think>\nThe office moves in December.' } }] }));
       });
     });
@@ -33,6 +36,16 @@ describe('OpenAICompatibleProvider (company gateway, person\'s own key)', () => 
     expect(call.auth).toBe('Bearer sk-person');
     expect(JSON.parse(call.body).model).toBe('MiniMax-M3.1-Flash');
     expect((await p.health()).ok).toBe(true);
+  });
+
+  it('leaves a reasoning model room to answer and explains when it ran out', async () => {
+    const p = new OpenAICompatibleProvider({ provider: 'openai', baseUrl: base, model: 'm', timeoutMs: 5000, apiKey: 'k' });
+    await p.summarize('short', { maxWords: 30 });
+    const last = seen.filter((s) => s.path === '/v1/chat/completions').at(-1)!;
+    expect(JSON.parse(last.body).max_tokens).toBeGreaterThanOrEqual(4000);
+    const r = await p.summarize('THINK-FOREVER', { maxWords: 30 });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(JSON.stringify(r.error)).toContain('token budget');
   });
 
   it('is not configured without a key', () => {

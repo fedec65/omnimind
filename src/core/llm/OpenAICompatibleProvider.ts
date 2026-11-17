@@ -46,8 +46,9 @@ export class OpenAICompatibleProvider implements LLMProvider {
           { role: 'system', content: SYSTEM_PROMPT.replace('N words', `${maxWords} words`) },
           { role: 'user', content: text },
         ],
-        // Reasoning models spend tokens before answering; leave room for both.
-        max_tokens: Math.max(1024, maxWords * 8),
+        // Reasoning models think before answering, sometimes at length (MiniMax
+        // counted words for 1,000 tokens and gave no answer, 17 Nov 2026).
+        max_tokens: Math.max(4000, maxWords * 8),
         temperature: 0.2,
         stream: false,
       },
@@ -55,10 +56,17 @@ export class OpenAICompatibleProvider implements LLMProvider {
       signal: opts?.signal,
     });
     if (!result.ok) return err(result.error);
-    const body = result.value as { choices?: Array<{ message?: { content?: unknown } }> } | undefined;
-    const content = body?.choices?.[0]?.message?.content;
-    if (typeof content !== 'string') {
-      return err({ kind: 'response', status: 200, body: 'malformed response' });
+    const body = result.value as { choices?: Array<{ finish_reason?: unknown; message?: { content?: unknown } }> } | undefined;
+    const choice = body?.choices?.[0];
+    const content = choice?.message?.content;
+    if (typeof content !== 'string' || content.trim() === '') {
+      return err({
+        kind: 'response',
+        status: 200,
+        body: choice?.finish_reason === 'length'
+          ? 'the model used its whole token budget thinking and gave no answer; try a shorter text'
+          : 'malformed response',
+      });
     }
     // Some models put their reasoning in <think> tags before the answer.
     return ok(content.replace(/<think>[\s\S]*?<\/think>/g, '').trim());
