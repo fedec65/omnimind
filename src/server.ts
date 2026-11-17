@@ -28,7 +28,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'http';
 import { URL } from 'url';
 import { readFile } from 'fs/promises';
 import { readFileSync } from 'fs';
-import { resolve, extname } from 'path';
+import { resolve, extname, sep } from 'path';
 import { fileURLToPath } from 'url';
 import { Omnimind } from './index.js';
 import { resolveBindHost } from './serverHost.js';
@@ -154,7 +154,11 @@ async function main(): Promise<void> {
 
 async function serveStatic(_req: IncomingMessage, res: ServerResponse, urlPath: string): Promise<void> {
   const filePath = resolve(STATIC_DIR, urlPath === '/' ? 'index.html' : urlPath.slice(1));
-  console.log('[Static] Request:', urlPath, '→ trying:', filePath);
+  // Served to a browser now, not only the desktop webview: never outside the GUI build.
+  if (filePath !== STATIC_DIR && !filePath.startsWith(STATIC_DIR + sep)) {
+    sendJson(res, 404, { error: 'Not found' });
+    return;
+  }
   try {
     const data = await readFile(filePath);
     const ext = extname(filePath);

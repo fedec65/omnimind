@@ -266,6 +266,17 @@ export class Omnimind {
     // (L2/L3) team/org memory. If unreachable or unauthorized, the
     // client keeps working local-only — never the other way around.
     let shared: SharedClient | null = null;
+    // Managed deployments (a company VM, a container) provide the shared
+    // server through the environment: OMNIMIND_SHARED_URL + OMNIMIND_SHARED_TOKEN.
+    // Written into the settings once at start so the GUI, the MCP server and
+    // the CLI agree; the token stays write-only in the settings API.
+    const sharedEnvUrl = process.env.OMNIMIND_SHARED_URL?.trim();
+    const sharedEnvToken = process.env.OMNIMIND_SHARED_TOKEN?.trim();
+    if (!config.sharedTransport && sharedEnvUrl && sharedEnvToken) {
+      store.setSetting('sharedServerUrl', sharedEnvUrl);
+      store.setSetting('sharedToken', sharedEnvToken);
+      store.setSetting('sharedEnabled', 'true');
+    }
     if (config.sharedTransport) {
       shared = new McpSharedClient({ serverUrl: '', token: '' }, config.sharedTransport);
     } else {

@@ -56,6 +56,22 @@ describe('Omnimind facade — shared server wiring', () => {
     await omni2.close();
   });
 
+  it('takes the shared server from OMNIMIND_SHARED_URL/TOKEN (managed deployments)', async () => {
+    process.env.OMNIMIND_SHARED_URL = 'https://harness.example/mcp/memory';
+    process.env.OMNIMIND_SHARED_TOKEN = 'omt_from_env';
+    try {
+      const omni = await Omnimind.create({ dataDir: tmpDir, adapters: false });
+      expect(omni.sharedAvailable()).toBe(true);
+      const s = omni.getSettings();
+      expect(s.ok && s.value.sharedServerUrl).toBe('https://harness.example/mcp/memory');
+      expect(s.ok && s.value.sharedEnabled).toBe('true');
+      await omni.close();
+    } finally {
+      delete process.env.OMNIMIND_SHARED_URL;
+      delete process.env.OMNIMIND_SHARED_TOKEN;
+    }
+  });
+
   it('does not create the shared client when disabled or missing config', async () => {
     const omni = await Omnimind.create({ dataDir: tmpDir, adapters: false });
     expect(omni.shared).toBeNull();

@@ -28,7 +28,12 @@ async function getBaseUrl(): Promise<string> {
         // fall through
       }
     }
-    // Fallback for dev mode or standalone browser
+    // Served by the omnimind server itself (a browser, possibly behind a
+    // proxy path such as Coder's): the API is beside the page.
+    if (typeof window !== 'undefined' && /^https?:$/.test(window.location.protocol) && window.location.port !== '1420') {
+      return new URL('.', window.location.href).href.replace(/\/$/, '');
+    }
+    // Vite dev server (port 1420): the backend runs separately.
     return 'http://localhost:8844';
   })();
 
