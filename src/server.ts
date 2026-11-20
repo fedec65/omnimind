@@ -181,12 +181,37 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
   const method = req.method ?? 'GET';
   const path = url.pathname;
 
-  if (method === 'GET' && !path.startsWith('/api/')) {
+  if (method === 'GET' && !path.startsWith('/api/') && path !== '/mcp') {
     await serveStatic(req, res, path);
     return;
   }
 
   // Health check
+  // The memory as an MCP server over HTTP (Streamable HTTP, stateless): for
+  // managed deployments where the agent or a gateway reaches omnimind over the
+  // network instead of starting it on stdio. Local only unless OMNIMIND_HOST
+  // says otherwise, like the rest of this server.
+  if (path === '/mcp') {
+    if (initPhase !== 'ready' || !omni) {
+      sendJson(res, 503, { error: 'starting' });
+      return;
+    }
+    if (method === 'POST') {
+      let parsed: unknown;
+      try {
+        parsed = await readBody(req);
+      } catch {
+        sendJson(res, 400, { error: 'invalid JSON body' });
+        return;
+      }
+      const { OmnimindMcpServer } = await import('./mcp/server.js');
+      await OmnimindMcpServer.handleHttp(omni, req, res, parsed);
+      return;
+    }
+    sendJson(res, 405, { error: 'POST only (stateless MCP)' });
+    return;
+  }
+
   if (path === '/api/health' && method === 'GET') {
     if (omni === null) {
       sendJson(res, 200, {
