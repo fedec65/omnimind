@@ -199,6 +199,31 @@ export class OmnimindMcpServer {
       .catch((e) => console.error('[Omnimind MCP] Startup aging failed:', e));
   }
 
+  /**
+   * Serve this server over Streamable HTTP for one request, with an existing
+   * facade (the HTTP server's own): no second database connection. Stateless,
+   * one server instance per request, as the SDK recommends for that mode.
+   */
+  static async handleHttp(
+    omni: Omnimind,
+    req: import('http').IncomingMessage,
+    res: import('http').ServerResponse,
+    body: unknown,
+  ): Promise<void> {
+    const { StreamableHTTPServerTransport } = await import('@modelcontextprotocol/sdk/server/streamableHttp.js');
+    const s = new OmnimindMcpServer();
+    s.omni = omni;
+    s.store = omni.memoryStore;
+    s.predictor = omni.predictor;
+    s.bus = omni.bus;
+    s.initialized = true;
+    // Stateless: no session id generator (the option is typed without undefined).
+    const transport = new StreamableHTTPServerTransport({ enableJsonResponse: true } as ConstructorParameters<typeof StreamableHTTPServerTransport>[0]);
+    res.on('close', () => { void transport.close(); void s.server.close(); });
+    await s.server.connect(transport as unknown as Parameters<Server['connect']>[0]);
+    await transport.handleRequest(req, res, body);
+  }
+
   async start(): Promise<void> {
     if (!this.initialized) {
       await this.init();
